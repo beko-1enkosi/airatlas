@@ -47,7 +47,7 @@ This architecture is planned. No pipeline stages or integrations are implemented
 | Ruff | Python linting and formatting |
 | GitHub Actions | Automated checks |
 
-None of these tools are installed or configured by this initialization issue. A dashboard technology has not been selected.
+Python packaging and local development setup are available. The remaining tools are planned and have not been added. A dashboard technology has not been selected.
 
 ## Repository structure
 
@@ -71,6 +71,7 @@ AirAtlas/
 │   └── .gitkeep
 ├── .env.example
 ├── .gitignore
+├── pyproject.toml
 └── README.md
 ```
 
@@ -84,21 +85,70 @@ The `.gitkeep` files preserve empty directories in Git. `.env.example` contains 
 
 ## Current status and milestone
 
-**M1 — Foundation · Issue #1 — Initialize repository**
+**M1 — Foundation · Issue #2 — Add development environment**
 
-The repository skeleton, README, ignore rules, and configuration placeholders are in place. There is no application logic, data, Python environment, dependency manifest, test suite, or automation yet. This issue completes repository initialization only; the rest of M1 remains ahead.
+The repository skeleton, Python package metadata, and local development instructions are in place. AirAtlas can be installed in editable mode, but the package remains a placeholder with no application logic or dependencies. There is no pipeline, test suite, lint configuration, or CI yet; those belong to separate issues.
 
-## Setup and development
+## Local Development Setup
 
-Setup and development instructions will be added during M1. The next M1 issue will handle the Python environment and dependencies. There is currently nothing to install or run.
+Use **Python 3.12** for local development. The current package metadata allows Python 3.12 and newer; future integrations may narrow that range. Install Python and Git before starting.
+
+1. Clone the repository into an `AirAtlas` directory:
+
+   ```bash
+   git clone https://github.com/beko-1enkosi/airatlas.git AirAtlas
+   cd AirAtlas
+   ```
+
+2. Check your Python version and create an isolated environment for this project:
+
+   ```bash
+   python --version
+   python -m venv .venv
+   ```
+
+   Make sure `python` selects Python 3.12. If it does not, use `py -3.12 -m venv .venv` on Windows or `python3.12 -m venv .venv` on Linux/macOS, with Python 3.12 installed.
+
+3. Activate the environment using the command for your shell:
+
+   **Windows PowerShell**
+
+   ```powershell
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **Linux/macOS (bash or zsh)**
+
+   ```bash
+   source .venv/bin/activate
+   ```
+
+   If PowerShell blocks activation, you can use `.\.venv\Scripts\python.exe` in place of `python` in the commands below without activating the environment.
+
+4. Upgrade pip and install AirAtlas from the repository root:
+
+   ```bash
+   python -m pip install --upgrade pip
+   python -m pip install -e .
+   ```
+
+   An editable installation links the environment to the code in `src/airatlas`, so edits to Python source files are available without reinstalling the package. Project metadata and dependency changes require running the install command again. No application dependencies are currently declared.
+
+5. Verify the installation:
+
+   ```bash
+   python -c "import airatlas; print('AirAtlas package import successful')"
+   ```
+
+The `.venv/` directory and generated `*.egg-info/` package metadata stay local and are ignored by Git. Run `deactivate` when finished if you activated the environment. Linting, testing, and CI instructions will be added in later M1 issues.
 
 ## Roadmap
 
-1. **Foundation (M1):** initialize the repository, then establish the Python environment and development tooling in separate issues.
+1. **Foundation (M1):** repository initialization and development environment setup are complete; linting, testing, and CI remain for separate issues.
 2. **Data acquisition:** ingest public air-quality and weather observations and preserve raw data.
 3. **Data processing:** validate, clean, transform, and store partitioned Parquet datasets.
 4. **Analytical modeling:** load PostgreSQL and develop dbt models.
 5. **Orchestration and quality:** schedule workflows with Airflow and expand automated checks.
 6. **Serving and presentation:** expose curated data through an API and dashboard, and document the completed platform.
 
-All roadmap work beyond repository initialization is planned.
+All roadmap work beyond repository initialization and development environment setup is planned.

@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "airatlas"
+version = "0.1.0"
+description = "A Data Engineering portfolio project for a public air-quality data platform."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/beko-1enkosi/airatlas"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = false
