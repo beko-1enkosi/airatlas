@@ -10,9 +10,28 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+dev = ["ruff>=0.9,<1"]
+
 [project.urls]
 Repository = "https://github.com/beko-1enkosi/airatlas"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 namespaces = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E4", "E7", "E9",  # Core Python style and error checks
+    "F",               # Pyflakes: unused imports, undefined names, etc.
+    "I",               # Import sorting
+    "UP",              # Modern Python syntax
+    "B",               # Common bug patterns
+]
+
+[tool.ruff.format]
+quote-style = "double"

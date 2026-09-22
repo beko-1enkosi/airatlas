@@ -47,7 +47,7 @@ This architecture is planned. No pipeline stages or integrations are implemented
 | Ruff | Python linting and formatting |
 | GitHub Actions | Automated checks |
 
-Python packaging and local development setup are available. The remaining tools are planned and have not been added. A dashboard technology has not been selected.
+Python packaging, local development setup, and Ruff linting and formatting are available. The remaining tools are planned and have not been added. A dashboard technology has not been selected.
 
 ## Repository structure
 
@@ -85,9 +85,9 @@ The `.gitkeep` files preserve empty directories in Git. `.env.example` contains 
 
 ## Current status and milestone
 
-**M1 — Foundation · Issue #2 — Add development environment**
+**M1 — Foundation · Issue #3 — Configure Ruff**
 
-The repository skeleton, Python package metadata, and local development instructions are in place. AirAtlas can be installed in editable mode, but the package remains a placeholder with no application logic or dependencies. There is no pipeline, test suite, lint configuration, or CI yet; those belong to separate issues.
+The repository skeleton, Python package metadata, local development instructions, and Ruff configuration are in place. AirAtlas can be installed in editable mode with Ruff as a development dependency. The package remains a placeholder with no application logic or runtime dependencies. There is no pipeline, test suite, or CI yet; those belong to separate issues.
 
 ## Local Development Setup
 
@@ -129,10 +129,10 @@ Use **Python 3.12** for local development. The current package metadata allows P
 
    ```bash
    python -m pip install --upgrade pip
-   python -m pip install -e .
+   python -m pip install -e ".[dev]"
    ```
 
-   An editable installation links the environment to the code in `src/airatlas`, so edits to Python source files are available without reinstalling the package. Project metadata and dependency changes require running the install command again. No application dependencies are currently declared.
+   An editable installation links the environment to the code in `src/airatlas`, so edits to Python source files are available without reinstalling the package. Project metadata and dependency changes require running the install command again. The `[dev]` extra installs optional development tools, currently Ruff, alongside AirAtlas. No application dependencies are currently declared.
 
 5. Verify the installation:
 
@@ -140,15 +140,45 @@ Use **Python 3.12** for local development. The current package metadata allows P
    python -c "import airatlas; print('AirAtlas package import successful')"
    ```
 
-The `.venv/` directory and generated `*.egg-info/` package metadata stay local and are ignored by Git. Run `deactivate` when finished if you activated the environment. Linting, testing, and CI instructions will be added in later M1 issues.
+The `.venv/` directory and generated `*.egg-info/` package metadata stay local and are ignored by Git. Run `deactivate` when finished if you activated the environment. Testing and CI instructions will be added in later M1 issues.
+
+## Code quality
+
+With the development environment active, run these commands from the repository root. Ruff handles both linting, which finds potential code-quality problems, and formatting, which keeps Python code consistently styled. Its configuration in `pyproject.toml` targets Python 3.12, uses an 88-character line-length target, and prefers double quotes.
+
+Check linting:
+
+```bash
+python -m ruff check .
+```
+
+Automatically fix safe lint issues:
+
+```bash
+python -m ruff check . --fix
+```
+
+Format Python code:
+
+```bash
+python -m ruff format .
+```
+
+Check formatting without changing files:
+
+```bash
+python -m ruff format --check .
+```
+
+Ruff's `.ruff_cache/` directory is generated locally and ignored by Git.
 
 ## Roadmap
 
-1. **Foundation (M1):** repository initialization and development environment setup are complete; linting, testing, and CI remain for separate issues.
+1. **Foundation (M1):** repository initialization, development environment setup, and Ruff configuration are complete; testing and CI remain for separate issues.
 2. **Data acquisition:** ingest public air-quality and weather observations and preserve raw data.
 3. **Data processing:** validate, clean, transform, and store partitioned Parquet datasets.
 4. **Analytical modeling:** load PostgreSQL and develop dbt models.
 5. **Orchestration and quality:** schedule workflows with Airflow and expand automated checks.
 6. **Serving and presentation:** expose curated data through an API and dashboard, and document the completed platform.
 
-All roadmap work beyond repository initialization and development environment setup is planned.
+All roadmap work beyond repository initialization, development environment setup, and Ruff configuration is planned.
