@@ -11,7 +11,10 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["ruff>=0.9,<1"]
+dev = [
+    "ruff>=0.9,<1",
+    "pytest>=8,<10",
+]
 
 [project.urls]
 Repository = "https://github.com/beko-1enkosi/airatlas"
@@ -35,3 +38,7 @@ select = [
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
