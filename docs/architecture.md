@@ -2,9 +2,9 @@
 
 ## Purpose and status
 
-AirAtlas is a Data Engineering portfolio project for collecting, processing, storing, and eventually serving public environmental data. **M1 - Foundation** and **M2 - Data Acquisition** are complete. Processing, analytical storage, orchestration, weather integration, and serving remain planned.
+AirAtlas is a Data Engineering portfolio project for collecting, processing, storing, and eventually serving public environmental data. **M1 - Foundation**, **M2 - Data Acquisition**, and **M3 - Processing & Quality** are complete. Analytical database storage, orchestration, weather integration, and serving remain planned.
 
-## Implemented acquisition flow
+## Implemented flow
 
 ```text
 OpenAQ API v3
@@ -13,7 +13,10 @@ OpenAQ API v3
   -> PM2.5 / PM10 sensor discovery
   -> Explicit historical dates or incremental timestamp window
   -> Sequential pagination, bounded retries, rate-limit handling
-  -> Raw JSON snapshots under data/raw/
+  -> Immutable raw JSON under data/raw/
+  -> Pandas normalization, validation, deduplication and conflict detection
+  -> Processed CSV + quality report under data/processed/
+  -> Curated partitioned Parquet under data/curated/
 ```
 
 Python and httpx implement the HTTP boundary. Location IDs resolve to sensor IDs because measurements are sensor-based. Original measurement objects are retained without an analytics schema conversion. Discovery remains terminal-only; the backfill and incremental scripts persist measurement batches.
@@ -42,22 +45,50 @@ Files are written to a temporary file in the destination directory, flushed, and
 
 The caller supplies a timezone-aware checkpoint and later upper boundary. They are normalized to UTC. The next candidate equals the requested upper boundary, including for complete empty windows. Required sensor discovery and measurement retrieval must be complete, and both required pollutants must be present.
 
-Unsafe incremental runs are refused by persistence. A persistence error prevents the CLI from reporting successful persistence. A safe candidate applies only to the queried location set, especially when `--location-id` is used. Checkpoint state is not saved; a future state/orchestration layer must commit it only after successful persistence. Source identifiers and timestamps remain available for future idempotent processing of repeated boundary records.
+Unsafe incremental runs are refused by persistence. A persistence error prevents the CLI from reporting successful persistence. A safe candidate applies only to the queried location set, especially when `--location-id` is used. Checkpoint state is not saved; a future state/orchestration layer must commit it only after successful persistence. Source identifiers and timestamps support deduplication of repeated boundary observations in the processed layer.
+
+## Processing and quality
+
+The processor discovers OpenAQ measurement envelopes beneath the raw root in sorted order. Invalid JSON or missing batch provenance fails clearly. Within valid batches, invalid records are excluded and counted by reason. Accepted records require positive location/sensor IDs, matching PM2.5/PM10 parameters, source units, finite values, and timezone-aware period boundaries with end after start. UTC start and end timestamps, local source timestamps, and relative raw-file provenance are retained. Units are preserved without conversion. Finite negative values remain present and are counted, not declared scientifically valid.
+
+The observation key is location ID, sensor ID, parameter, UTC period start, and UTC period end. Repeated matching source observations become one row; conflicting source content raises an error. The full snapshot is sorted deterministically and written as `data/processed/openaq/air_quality_observations.csv`. `quality_report.json` records input, rejection, duplicate, final-row, negative-value, parameter, and observed-unit counts. No raw batches is an explicit input error; complete empty batches produce a header-only CSV and zero-row report. Processed files are staged and replaced atomically per file.
+
+## Curated Parquet
+
+Curation reads only the processed CSV. It checks the required schema, supported pollutants, typed values, UTC periods, and absence of duplicate natural keys; it never silently deduplicates again. Optional nulls and provenance columns survive. PyArrow stores UTC boundaries as nanosecond timestamps, IDs as integers, and numeric measurements as doubles. No unit conversion or further environmental interpretation occurs.
+
+```text
+data/curated/openaq/
+  air_quality/
+    parameter=pm25/
+      measurement_date_utc=2026-09-02/
+        part-00000.parquet
+    parameter=pm10/
+      measurement_date_utc=2026-09-02/
+        part-00000.parquet
+  air_quality_manifest.json
+```
+
+`measurement_date_utc` is the UTC calendar date of **period end**, not start or local time. Partition columns are represented in the directory names and reconstructed when reading the dataset with Hive partitioning. The original period timestamps remain in Parquet. Pollutant/date partitioning lets downstream readers select relevant subsets without using overly granular sensor/hour partitions. Parquet offers compressed columnar storage and typed columns for analysis.
+
+Rows are sorted before writing fixed filenames. A staged dataset is read back and compared with the validated input, including values, nulls, and timestamp types. The manifest records schema version, source layer, input basename (no absolute machine path), row/pollutant/location/sensor counts, earliest period start, latest period end, partitions, and columns.
+
+A rebuild replaces the dedicated `openaq/` curated namespace, including its manifest, removing stale partitions. An empty processed input raises without replacing an existing snapshot. Write or validation failures leave the old build intact; an ordinary publication failure rolls back the directory swap. Run one builder at a time. The swap is not a concurrent-reader or power-loss transaction: interruption can leave a backup requiring manual recovery. This keeps rebuilds simple without claiming database-style transactions.
 
 ## Data layers and future architecture
 
-| Layer | Current state and intended purpose |
+| Layer | Implemented purpose |
 | --- | --- |
-| `data/raw/` | Implemented local source-preserving OpenAQ JSON snapshots; generated files are ignored by Git. |
-| `data/processed/` | Placeholder for future validated, cleaned, and transformed intermediate data. |
-| `data/curated/` | Placeholder for future analysis-ready outputs. |
+| `data/raw/` | Immutable OpenAQ JSON source evidence, including original measurement objects and retrieval provenance. |
+| `data/processed/` | Rebuildable validated, normalized, deduplicated CSV observations and a quality report. |
+| `data/curated/` | Rebuildable, analysis-ready partitioned Parquet derived from processed CSV, plus its manifest. |
 
-Planned flow: raw air-quality data plus future Open-Meteo weather data -> validation/cleaning -> Pandas -> partitioned Parquet -> PostgreSQL -> dbt models -> FastAPI/dashboard. Apache Airflow will orchestrate stages. The dashboard is an output layer; its technology has not been selected.
+All generated layers are Git-ignored. Processing and curation do not alter their inputs.
 
-There are no processed datasets, Parquet outputs, database integrations, dbt models, Airflow DAGs, weather integration, API endpoints, or dashboard functionality yet.
+Planned flow: curated air-quality Parquet plus future Open-Meteo weather data -> PostgreSQL -> dbt models -> FastAPI/dashboard. Apache Airflow will orchestrate stages. The dashboard is an output layer; its technology has not been selected. Database integrations, dbt models, Airflow DAGs, weather integration, API endpoints, and dashboard functionality do not exist yet.
 
 ## Foundation tooling
 
-Python uses a `src/` package layout and setuptools with editable installation. Python 3.12 is the recommended baseline. Ruff handles linting/formatting; pytest exercises offline ingestion and temporary-directory storage. GitHub Actions runs installation and checks on pushes and pull requests, without deployment.
+Python uses a `src/` package layout and setuptools with editable installation. Python 3.12 is the recommended baseline. Ruff handles linting/formatting; pytest exercises offline ingestion, processing, and temporary-directory JSON/CSV/Parquet storage. GitHub Actions runs installation and checks on pushes and pull requests, without deployment.
 
 See the [development guide](development.md) or [project overview](../README.md).
