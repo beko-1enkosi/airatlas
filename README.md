@@ -1,6 +1,6 @@
 # AirAtlas
 
-AirAtlas is a Data Engineering portfolio project for building an end-to-end air-quality data platform using public environmental data. It acquires OpenAQ air-quality data and builds validated observations and partitioned Parquet; Open-Meteo weather integration is planned.
+AirAtlas is a Data Engineering portfolio project for building an end-to-end air-quality data platform using public environmental data. It acquires OpenAQ air-quality data, builds validated observations, adds historical Open-Meteo weather context, and loads the enriched dataset into PostgreSQL.
 
 ## Problem statement
 
@@ -28,6 +28,10 @@ OpenAQ API v3
   -> Deduplication + quality checks
   -> Processed CSV + quality report
   -> Curated partitioned Parquet
+       + Open-Meteo historical weather -> immutable raw weather cache
+  -> Location/hour weather enrichment
+  -> Weather-enriched Parquet
+  -> PostgreSQL analytical warehouse
 ```
 
 The approved stations are in [config/mvp_locations.json](config/mvp_locations.json). Raw JSON preserves source measurement objects with location, sensor, window, and retrieval provenance. Identical repeated batches are reused; conflicting content never silently replaces a snapshot.
@@ -35,15 +39,14 @@ The approved stations are in [config/mvp_locations.json](config/mvp_locations.js
 ## Planned architecture
 
 ```text
-Curated air-quality Parquet + future Open-Meteo weather data
-  -> PostgreSQL
+PostgreSQL warehouse
   -> dbt analytical models
   -> FastAPI / dashboard serving layer
 
 Apache Airflow will orchestrate pipeline stages.
 ```
 
-Weather integration, database modeling, orchestration, and serving remain planned. See the [architecture document](docs/architecture.md) for current and future responsibilities.
+dbt analytical modeling, orchestration, and serving remain planned. See the [architecture document](docs/architecture.md) for current and future responsibilities.
 
 ## Repository structure
 
@@ -63,13 +66,18 @@ AirAtlas/
 |   |-- backfill_openaq_measurements.py
 |   |-- ingest_incremental_openaq.py
 |   |-- process_air_quality.py
-|   `-- build_curated_air_quality.py
+|   |-- build_curated_air_quality.py
+|   |-- enrich_air_quality_weather.py
+|   `-- load_postgres_warehouse.py
+|-- sql/example_queries.sql
 |-- src/airatlas/
 |   |-- __init__.py
 |   |-- ingestion/
 |   |-- storage/
 |   |-- processing/
-|   `-- curation/
+|   |-- curation/
+|   |-- weather/
+|   `-- warehouse/
 |-- tests/
 |-- .env.example
 |-- .gitignore
@@ -77,7 +85,7 @@ AirAtlas/
 `-- README.md
 ```
 
-`ingestion/` retrieves OpenAQ data; `storage/` preserves raw batches; `processing/` validates and deduplicates observations; `curation/` publishes Parquet. `scripts/` provides terminal entry points, and `tests/` covers the pipeline offline using temporary datasets. Generated data and local credentials are ignored by Git; the tree shows tracked placeholders, not generated datasets.
+`ingestion/` retrieves OpenAQ data; `storage/` preserves raw batches; `processing/` validates and deduplicates observations; `curation/` publishes Parquet; `weather/` retrieves and joins hourly weather; `warehouse/` loads PostgreSQL. `scripts/` provides terminal entry points, and `tests/` covers the pipeline offline using temporary datasets. Generated data and local credentials are ignored by Git; the tree shows tracked placeholders, not generated datasets.
 
 ## Current status and milestones
 
@@ -87,11 +95,15 @@ AirAtlas/
 
 **M3 — Processing & Quality: complete**
 
+**M4 — Weather & Warehouse: complete**
+
 M1 provides Python packaging, a development environment, Ruff, pytest, GitHub Actions CI, and documentation. M2 adds OpenAQ API v3 integration, South African location discovery, six approved MVP stations, PM2.5/PM10 historical backfill and incremental retrieval, automatic pagination, bounded retries, rate-limit handling, and deterministic raw JSON persistence.
 
 AirAtlas can now discover South African OpenAQ sources, retrieve complete historical or incremental PM2.5/PM10 measurements for its configured stations, and preserve those source records in a raw data layer. Retrieval failures are surfaced rather than treated as complete. Incremental checkpoints are supplied explicitly and returned as candidates; durable checkpoint management is not implemented.
 
 M3 adds raw JSON loading, a normalized observation schema, record validation and rejection reporting, duplicate removal and conflict detection, processed CSV and a quality report, and curated Parquet partitioned by pollutant and UTC measurement date. AirAtlas can now transform immutable raw batches into validated, deduplicated observations and publish an analysis-ready dataset. Source units and both measurement-period boundaries are retained; finite negative values are counted rather than scientifically classified or automatically removed.
+
+M4 adds historical Open-Meteo ingestion with raw caching, temperature, relative humidity, precipitation and wind-speed enrichment by location and UTC hour, weather-enriched Parquet, and a PostgreSQL analytical warehouse. Transactional full refreshes, relational constraints, and analytical indexes support predictable repeat loads. AirAtlas can now enrich curated PM2.5/PM10 observations with historical weather context and publish a queryable warehouse. Coordinates must be present in curated observations or confirmed configuration; missing coordinates fail rather than being guessed.
 
 ## Development
 
@@ -117,10 +129,10 @@ GitHub Actions runs installation and these checks on pushes and pull requests us
 ## Roadmap
 
 1. **Foundation (M1) - complete:** repository structure, development environment, Ruff, pytest, CI, and documentation.
-2. **Data Acquisition (M2) - complete:** OpenAQ discovery, configured PM2.5/PM10 retrieval, API reliability, and raw JSON persistence. Weather integration remains planned.
+2. **Data Acquisition (M2) - complete:** OpenAQ discovery, configured PM2.5/PM10 retrieval, API reliability, and raw JSON persistence. Historical weather enrichment is implemented in M4.
 3. **Processing & Quality (M3) - complete:** normalized observations, validation, quality reporting, deduplication, conflict detection, processed CSV, and partitioned Parquet.
-4. **Analytical modeling:** load PostgreSQL and develop dbt models.
+4. **Weather & Warehouse (M4) - complete:** historical weather enrichment and transactional PostgreSQL snapshot loading. dbt modeling remains planned.
 5. **Orchestration and quality:** schedule workflows with Airflow and expand automated checks.
 6. **Serving and presentation:** expose curated data through an API and dashboard, and document the completed platform.
 
-Weather integration, analytical modeling, orchestration, and serving remain planned; no M4 or later functionality is implemented.
+dbt modeling, orchestration, APIs, and dashboards remain planned; no M5/later functionality is implemented.

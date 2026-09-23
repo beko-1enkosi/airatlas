@@ -43,9 +43,9 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-Editable installation links the environment to `src/airatlas`, so Python source edits are available without reinstalling. Rerun installation after changing project metadata or dependencies. The `[dev]` extra installs Ruff and pytest; application dependencies include httpx for HTTP, Pandas for processing, and PyArrow for Parquet. `pyproject.toml` is the configuration source for packaging and these tools.
+Editable installation links the environment to `src/airatlas`, so Python source edits are available without reinstalling. Rerun installation after changing project metadata or dependencies. The `[dev]` extra installs Ruff and pytest; application dependencies include httpx for HTTP, Pandas for processing, PyArrow for Parquet, and Psycopg 3 for PostgreSQL. `pyproject.toml` is the configuration source for packaging and these tools.
 
-Run `deactivate` when finished if you activated the environment. Virtual environments, package metadata, and tool caches are ignored by Git. `.env.example` contains an empty OpenAQ key placeholder. Automated tests require no real credentials; live acquisition reads `OPENAQ_API_KEY` from the process environment and does not automatically load `.env` files.
+Run `deactivate` when finished if you activated the environment. Virtual environments, package metadata, and tool caches are ignored by Git. `.env.example` contains an empty OpenAQ key placeholder and an example PostgreSQL URL. Automated tests require no real credentials; live acquisition reads `OPENAQ_API_KEY` from the process environment and does not automatically load `.env` files.
 
 ## Code quality
 
@@ -73,7 +73,7 @@ Ruff targets Python 3.12, uses an 88-character line-length target, and prefers d
 python -m pytest
 ```
 
-pytest automatically discovers tests under `tests/` using the configuration in `pyproject.toml`. The suite covers package import, MVP configuration, discovery, historical/incremental windows, authentication, pagination, retries, raw persistence, processing quality, and curated Parquet rebuilds. HTTP tests use mocks; data tests use pytest temporary directories, never the real repository data layers. No live OpenAQ access is needed.
+pytest automatically discovers tests under `tests/` using the configuration in `pyproject.toml`. The suite covers package import, MVP configuration, discovery, historical/incremental windows, authentication, pagination, retries, raw persistence, processing quality, and curated Parquet rebuilds. HTTP tests use mocks; data tests use pytest temporary directories, never the real repository data layers. Weather tests are also offline. Warehouse tests use temporary Parquet and fake Psycopg connections; the main suite needs no live APIs or PostgreSQL server.
 
 ## M2 acquisition workflow
 
@@ -119,7 +119,7 @@ Incremental persistence refuses unsafe runs, including missing required sensors 
 
 ## M2 outcome
 
-AirAtlas now retrieves configured South African OpenAQ PM2.5/PM10 measurements with pagination and bounded retries, and preserves complete source batches as deterministic raw JSON. M3 extends these raw batches into processed and curated observations. Weather integration, analytical database storage, orchestration, and serving remain future work.
+AirAtlas now retrieves configured South African OpenAQ PM2.5/PM10 measurements with pagination and bounded retries, and preserves complete source batches as deterministic raw JSON. M3 extends these raw batches into processed and curated observations. M4 adds weather enrichment and PostgreSQL storage; orchestration and serving remain future work.
 
 ## M3 processing and curation workflow
 
@@ -147,7 +147,55 @@ Raw data stays unchanged. Processed CSV, quality reports, curated Parquet, and m
 
 No raw files causes a clear processing input error. Complete empty raw batches may produce a zero-row CSV; curation rejects empty input and preserves any previous snapshot. Check command success and the manifest before using an existing dataset after a failed rebuild.
 
-**M3 outcome:** AirAtlas transforms immutable OpenAQ batches into validated, deduplicated observations, reports quality outcomes, and publishes an analysis-ready partitioned Parquet dataset. M3 is complete; database, orchestration, weather, API, and dashboard work remains planned.
+**M3 outcome:** AirAtlas transforms immutable OpenAQ batches into validated, deduplicated observations, reports quality outcomes, and publishes an analysis-ready partitioned Parquet dataset. M3 is complete; M4 adds weather and warehouse capabilities below. Orchestration, APIs, and dashboards remain planned.
+
+## M4 weather and warehouse workflow
+
+First enrich the M3 curated air-quality dataset:
+
+```bash
+python scripts/enrich_air_quality_weather.py
+```
+
+Open-Meteo needs no API key. The command resolves each location's coordinates from curated observations or confirmed MVP configuration, requests only the required historical dates, and reuses valid raw cache files for identical requests. The current configuration contains no coordinates: missing curated coordinates must be resolved with confirmed metadata before enrichment can run. Do not guess or geocode station names.
+
+Weather is matched to location and UTC period-end hour. Missing weather keeps the observation with null fields. The summary and `data/curated/open_meteo_air_quality/air_quality_weather_manifest.json` report match coverage. Use `--input-dir`, `--raw-weather-dir`, and `--output-dir` for custom roots. Original air-quality Parquet stays unchanged; raw weather JSON and enriched Parquet remain Git-ignored.
+
+Install and start PostgreSQL separately, then create a database (for example, `airatlas`) and a role allowed to create the `airatlas` schema and own its tables/indexes. AirAtlas does not install PostgreSQL or create the database. For an existing AirAtlas schema, the loader role needs appropriate schema/table privileges, including SELECT, INSERT, DELETE and table locking. Rerun `python -m pip install -e ".[dev]"` to install Psycopg after updating dependencies.
+
+Set the connection string in the process environment using placeholders:
+
+**Windows PowerShell:**
+
+```powershell
+$env:AIRATLAS_DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/airatlas"
+```
+
+**Linux/macOS:**
+
+```bash
+export AIRATLAS_DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/airatlas"
+```
+
+Use your own local credentials, percent-encoding reserved characters in URL components when needed. Keep real secrets out of committed files, shared output and saved shell history. `.env.example` is a template; AirAtlas does not automatically read a private `.env`. The CLI never accepts a password argument or prints the DSN.
+
+Load the warehouse:
+
+```bash
+python scripts/load_postgres_warehouse.py
+# Optional alternate enriched input:
+python scripts/load_postgres_warehouse.py --input-dir <enriched-parquet-directory>
+```
+
+The default input is `data/curated/open_meteo_air_quality/air_quality_weather/`. This is a **full refresh** of `airatlas.locations` and `airatlas.observations`, including rows from earlier loads that are absent in the new snapshot. It leaves unrelated tables alone and preserves files in all data layers. It creates missing AirAtlas structures, loads locations before observations, validates counts and constraints, and commits once. A failure rolls back. Repeat loads do not accumulate observations; incompatible existing schema definitions require explicit investigation, not automatic migrations.
+
+Empty input, missing required columns, duplicate observation keys, conflicting non-null location metadata, and timestamps finer than PostgreSQL's microsecond precision fail clearly before connecting. Missing weather and optional source fields remain SQL nulls. The summary reports loaded locations/observations, pollutant counts, weather coverage, and earliest/latest boundaries.
+
+Open [sql/example_queries.sql](../sql/example_queries.sql) in your PostgreSQL SQL client, or run `\i sql/example_queries.sql` from a connected `psql` session started at the repository root. The examples show latest observations, location averages, weather comparisons, and daily trends without combining different source units.
+
+Automated tests use fake connections and do not prove a live database deployment. When `AIRATLAS_DATABASE_URL` points to a suitable development database, an optional smoke test can load a small enriched fixture twice and inspect counts and example queries. Remember that each run replaces the two AirAtlas tables; use a development database for fixtures.
+
+**M4 outcome:** AirAtlas can enrich curated PM2.5 and PM10 observations with historical weather context and publish them into a queryable PostgreSQL warehouse. M4 is complete. dbt, scheduling, APIs, and dashboards remain future work.
 
 ## Continuous integration
 

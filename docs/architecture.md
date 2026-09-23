@@ -2,7 +2,7 @@
 
 ## Purpose and status
 
-AirAtlas is a Data Engineering portfolio project for collecting, processing, storing, and eventually serving public environmental data. **M1 - Foundation**, **M2 - Data Acquisition**, and **M3 - Processing & Quality** are complete. Analytical database storage, orchestration, weather integration, and serving remain planned.
+AirAtlas is a Data Engineering portfolio project for collecting, processing, storing, and eventually serving public environmental data. **M1 - Foundation**, **M2 - Data Acquisition**, **M3 - Processing & Quality**, and **M4 - Weather & Warehouse** are complete. dbt modeling, orchestration, and serving remain planned.
 
 ## Implemented flow
 
@@ -17,6 +17,9 @@ OpenAQ API v3
   -> Pandas normalization, validation, deduplication and conflict detection
   -> Processed CSV + quality report under data/processed/
   -> Curated partitioned Parquet under data/curated/
+       + Open-Meteo historical hours -> raw weather cache
+  -> Weather-enriched Parquet
+  -> PostgreSQL airatlas schema
 ```
 
 Python and httpx implement the HTTP boundary. Location IDs resolve to sensor IDs because measurements are sensor-based. Original measurement objects are retained without an analytics schema conversion. Discovery remains terminal-only; the backfill and incremental scripts persist measurement batches.
@@ -75,20 +78,49 @@ Rows are sorted before writing fixed filenames. A staged dataset is read back an
 
 A rebuild replaces the dedicated `openaq/` curated namespace, including its manifest, removing stale partitions. An empty processed input raises without replacing an existing snapshot. Write or validation failures leave the old build intact; an ordinary publication failure rolls back the directory swap. Run one builder at a time. The swap is not a concurrent-reader or power-loss transaction: interruption can leave a backup requiring manual recovery. This keeps rebuilds simple without claiming database-style transactions.
 
+## Historical weather enrichment
+
+Open-Meteo's public Historical Weather API supplies hourly temperature (Celsius), relative humidity (%), precipitation (mm), and wind speed (km/h), requested in UTC without an API key. Transient HTTP/network errors have bounded retries; permanent errors fail immediately. Source metadata, units, array lengths, timestamps, and structural values are validated before use.
+
+Coordinates come first from consistent non-null curated pairs, then confirmed MVP configuration coordinates. Pairs differing by more than 0.00001 degrees fail; acceptable rounding differences select a deterministic pair. Missing coordinates fail before requests. The current six-location configuration has no coordinates, so they must come from curated observations unless confirmed values are supplied later. Names are never geocoded or used to guess coordinates.
+
+Each represented location requests only the inclusive date span needed by its measurement-period ends. A cache under `data/raw/open_meteo/hourly/location_id=<id>/` uses dates plus a request-identity hash covering coordinates, variables, timezone, and units. Original response metadata, grid coordinates, hourly units and arrays are preserved. Valid identical requests reuse immutable files; corrupt caches fail rather than silently refreshing. Publication uses the same temporary-file/hard-link approach as OpenAQ raw storage.
+
+Weather timestamps are UTC-aware. Air-quality period end is floored to the UTC hour and left-joined with weather on `(location_id, weather_hour_utc)`, never nearest-neighbour matching. Unmatched air-quality rows remain present. Missing weather values stay null; all-null weather hours count as unavailable, while partially populated hours count as matched. Lookup coordinates have separate weather column names.
+
+The derived `data/curated/open_meteo_air_quality/air_quality_weather/` dataset preserves all air-quality columns and uses the existing pollutant/UTC-date partitions. A staged rebuild is read back before publication and leaves original curated air quality unchanged. Its manifest reports counts, match percentage (0?100), locations/sensors, coverage, variables, and columns. Rebuild/publication limitations are the same as M3.
+
+## PostgreSQL analytical warehouse
+
+The warehouse provides relational SQL access to the enriched analytical snapshot through direct Psycopg 3 calls. It reads only weather-enriched Parquet; raw, processed, and curated files remain unchanged. `AIRATLAS_DATABASE_URL` comes from the process environment; private `.env` files are not automatically loaded and connection details are not included in error summaries.
+
+- `airatlas.locations` has one row per stable OpenAQ location ID (primary key), its name, and available air-quality/weather coordinates.
+- `airatlas.observations` retains observation identity, source units/value, both period boundaries, local timestamp strings, UTC date, source/retrieval provenance, and nullable weather context. Its location ID references `locations`.
+- A database unique constraint protects `(location_id, sensor_id, parameter, datetime_from_utc, datetime_to_utc)`. Pollutants are constrained to PM2.5/PM10. Indexes on `(location_id, datetime_to_utc)`, `(parameter, datetime_to_utc)`, and `measurement_date_utc` support time-series and daily filtering.
+
+UTC columns use `TIMESTAMPTZ`; partition dates use `DATE`; IDs use `BIGINT`; measurements use `DOUBLE PRECISION`; source/local timestamp strings remain `TEXT`. SQL nulls preserve missing coordinates, parameter IDs, and weather values. PostgreSQL has microsecond timestamp precision: finer input timestamps are rejected before connection rather than rounded into changed natural keys. Conflicting non-null location metadata is also rejected rather than arbitrarily choosing dimension values.
+
+Input schema, typed mappings, supported pollutants, natural keys, dates and hour alignment are checked before connection. Empty input is refused to avoid clearing a warehouse accidentally. Missing optional provenance fields become null; required schema fields cannot be manufactured. SQL column mappings are explicit and independent of Parquet column order.
+
+Schema/table/index creation is idempotent and part of the refresh transaction; it is not a migration system. Existing incompatible schemas fail rather than being silently changed. The loader locks the two AirAtlas tables against other writers, deletes observations then locations, inserts locations then batched observations, and checks row/location counts, duplicates, supported pollutants and foreign-key references. Only then does the connection context commit. Failures roll back the refresh; table definitions and indexes remain stable. Repeated loads replace the snapshot rather than append. Operations are scoped to the two `airatlas` tables, with no schema drops or cascade refreshes.
+
+Examples in `sql/example_queries.sql` cover recent observations, averages by location, weather comparisons and daily trends. They group by pollutant and unit, avoiding incompatible concentration averages. These are descriptive observation-weighted summaries, not causal or duration-weighted analyses.
+
 ## Data layers and future architecture
 
 | Layer | Implemented purpose |
 | --- | --- |
-| `data/raw/` | Immutable OpenAQ JSON source evidence, including original measurement objects and retrieval provenance. |
+| `data/raw/` | Immutable OpenAQ JSON and cache-first Open-Meteo JSON source evidence, with request provenance. |
 | `data/processed/` | Rebuildable validated, normalized, deduplicated CSV observations and a quality report. |
-| `data/curated/` | Rebuildable, analysis-ready partitioned Parquet derived from processed CSV, plus its manifest. |
+| `data/curated/` | Rebuildable air-quality and weather-enriched Parquet datasets, plus manifests. |
+| PostgreSQL `airatlas` | Queryable relational analytical storage rebuilt transactionally from enriched Parquet. |
 
-All generated layers are Git-ignored. Processing and curation do not alter their inputs.
+All generated filesystem layers are Git-ignored. Processing and curation do not alter their inputs.
 
-Planned flow: curated air-quality Parquet plus future Open-Meteo weather data -> PostgreSQL -> dbt models -> FastAPI/dashboard. Apache Airflow will orchestrate stages. The dashboard is an output layer; its technology has not been selected. Database integrations, dbt models, Airflow DAGs, weather integration, API endpoints, and dashboard functionality do not exist yet.
+Planned flow: PostgreSQL warehouse -> dbt models -> FastAPI/dashboard. Apache Airflow will orchestrate stages. The dashboard is an output layer; its technology has not been selected. dbt models, Airflow DAGs, API endpoints, and dashboard functionality do not exist yet. M4 weather enrichment and warehouse loading are implemented.
 
 ## Foundation tooling
 
-Python uses a `src/` package layout and setuptools with editable installation. Python 3.12 is the recommended baseline. Ruff handles linting/formatting; pytest exercises offline ingestion, processing, and temporary-directory JSON/CSV/Parquet storage. GitHub Actions runs installation and checks on pushes and pull requests, without deployment.
+Python uses a `src/` package layout and setuptools with editable installation. Python 3.12 is the recommended baseline. Ruff handles linting/formatting; pytest exercises offline ingestion, processing, and temporary-directory JSON/CSV/Parquet storage. Warehouse unit tests use fake Psycopg connections, so CI requires no PostgreSQL service. Real database validation is optional and reported separately. GitHub Actions runs installation and checks on pushes and pull requests, without deployment.
 
 See the [development guide](development.md) or [project overview](../README.md).
