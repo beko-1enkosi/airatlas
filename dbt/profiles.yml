@@ -1,0 +1,16 @@
+# Credentials come from the process environment; this file contains no secrets.
+# Use: dbt parse --project-dir dbt --profiles-dir dbt
+# Folder schemas append _staging/_intermediate to the target schema.
+airatlas_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('AIRATLAS_DB_HOST', 'localhost') }}"
+      port: "{{ env_var('AIRATLAS_DB_PORT', '5432') | int }}"
+      dbname: "{{ env_var('AIRATLAS_DB_NAME', 'airatlas') }}"
+      user: "{{ env_var('AIRATLAS_DB_USER', '') }}"
+      password: "{{ env_var('AIRATLAS_DB_PASSWORD', '') }}"
+      schema: "{{ env_var('AIRATLAS_DBT_SCHEMA', 'airatlas_analytics') }}"
+      threads: 1
+      connect_timeout: 10
