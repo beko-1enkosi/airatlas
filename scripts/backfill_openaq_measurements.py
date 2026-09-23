@@ -8,6 +8,7 @@ from airatlas.ingestion.historical_backfill import (
     backfill_historical_measurements,
     validate_date_range,
 )
+from airatlas.ingestion.measurement_window import load_mvp_config, select_mvp_locations
 from airatlas.ingestion.openaq import (
     OpenAQClient,
     OpenAQClientError,
@@ -35,12 +36,9 @@ def main() -> None:
     args = parser.parse_args()
     config_path = Path(__file__).resolve().parents[1] / "config/mvp_locations.json"
     try:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config = load_mvp_config(config_path)
         validate_date_range(args.date_from, args.date_to)
-        if args.location_id is not None and args.location_id not in {
-            location["id"] for location in config["locations"]
-        }:
-            parser.error("--location-id must belong to the approved MVP configuration.")
+        select_mvp_locations(config, args.location_id)
         result = backfill_historical_measurements(
             OpenAQClient(),
             config,
