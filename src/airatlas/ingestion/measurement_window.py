@@ -1,4 +1,4 @@
-"""Shared single-page sensor retrieval for explicit ingestion windows."""
+"""Shared paginated sensor retrieval for explicit ingestion windows."""
 
 import json
 from pathlib import Path
@@ -64,7 +64,7 @@ def fetch_measurement_window(
     sensor_results = []
     location_reports = []
     for location in locations:
-        response = client.get_location_sensors(location["id"])
+        response = client.get_all_location_sensors(location["id"])
         sensors = response["results"]
         matching = [
             sensor
@@ -82,13 +82,16 @@ def fetch_measurement_window(
                     parameter for parameter in required if parameter not in present
                 ],
                 "sensor_meta": sensor_meta,
-                "sensor_discovery_incomplete": _incomplete(
-                    (sensor_meta or {}).get("found"), len(sensors)
-                ),
+                "sensor_pagination": response.get("pagination"),
+                "sensor_discovery_incomplete": False
+                if response.get("pagination", {}).get("complete") is True
+                else _incomplete((sensor_meta or {}).get("found"), len(sensors)),
             }
         )
         for sensor in matching:
-            measurements = client.get_sensor_measurements(sensor["id"], params=params)
+            measurements = client.get_all_sensor_measurements(
+                sensor["id"], params=params
+            )
             records = measurements["results"]
             meta = measurements.get("meta")
             found = (meta or {}).get("found")
@@ -104,7 +107,10 @@ def fetch_measurement_window(
                     "results": records,
                     "returned": len(records),
                     "found": found,
-                    "incomplete": _incomplete(found, len(records)),
+                    "pagination": measurements.get("pagination"),
+                    "incomplete": False
+                    if measurements.get("pagination", {}).get("complete") is True
+                    else _incomplete(found, len(records)),
                 }
             )
     return {

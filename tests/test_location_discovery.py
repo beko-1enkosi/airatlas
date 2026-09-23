@@ -13,7 +13,7 @@ from airatlas.ingestion.openaq import OpenAQClient
 
 def test_filter_and_location_metadata():
     client = Mock(spec=OpenAQClient)
-    client.get_locations.return_value = {
+    client.get_all_locations.return_value = {
         "meta": {"found": 1},
         "results": [
             {
@@ -36,7 +36,7 @@ def test_filter_and_location_metadata():
         ],
     }
     result = discover_south_african_locations(client)
-    client.get_locations.assert_called_once_with(
+    client.get_all_locations.assert_called_once_with(
         {"iso": "ZA", "page": 1, "limit": 1000}
     )
     assert result["locations"] == [
@@ -71,7 +71,7 @@ def test_filter_and_location_metadata():
 )
 def test_missing_optional_metadata(optional):
     client = Mock(spec=OpenAQClient)
-    client.get_locations.return_value = {"results": [{"id": 456, **optional}]}
+    client.get_all_locations.return_value = {"results": [{"id": 456, **optional}]}
     result = discover_south_african_locations(client)
     location = result["locations"][0]
     assert location["id"] == 456
@@ -96,7 +96,7 @@ def test_missing_optional_metadata(optional):
 @pytest.mark.parametrize("found", [3, "3"])
 def test_incomplete_page(found):
     client = Mock(spec=OpenAQClient)
-    client.get_locations.return_value = {
+    client.get_all_locations.return_value = {
         "meta": {"found": found},
         "results": [{"id": 1}, {"id": 2}],
     }
@@ -106,13 +106,13 @@ def test_incomplete_page(found):
     assert result["incomplete"] is True
     assert "incomplete" in result["warning"]
     assert [location["id"] for location in result["locations"]] == [1, 2]
-    client.get_locations.assert_called_once()
+    client.get_all_locations.assert_called_once()
 
 
 @pytest.mark.parametrize("found", [None, ">1000", "unknown"])
 def test_unknown_total(found):
     client = Mock(spec=OpenAQClient)
-    client.get_locations.return_value = {"meta": {"found": found}, "results": []}
+    client.get_all_locations.return_value = {"meta": {"found": found}, "results": []}
     result = discover_south_african_locations(client)
     assert result["found"] == found
     assert result["incomplete"] is None
@@ -121,7 +121,7 @@ def test_unknown_total(found):
 
 def test_empty_discovery():
     client = Mock(spec=OpenAQClient)
-    client.get_locations.return_value = {"meta": {"found": 0}, "results": []}
+    client.get_all_locations.return_value = {"meta": {"found": 0}, "results": []}
     result = discover_south_african_locations(client)
     assert result["returned"] == 0
     assert result["locations"] == []
@@ -130,7 +130,10 @@ def test_empty_discovery():
 
 def test_terminal_output(monkeypatch, capsys):
     client = Mock(spec=OpenAQClient)
-    client.get_locations.return_value = {"meta": {"found": 2}, "results": [{"id": 123}]}
+    client.get_all_locations.return_value = {
+        "meta": {"found": 2},
+        "results": [{"id": 123}],
+    }
     monkeypatch.setattr("airatlas.ingestion.openaq.OpenAQClient", lambda: client)
     script = (
         Path(__file__).resolve().parents[1] / "scripts/discover_openaq_locations.py"
@@ -142,4 +145,4 @@ def test_terminal_output(monkeypatch, capsys):
     assert output["locations"][0]["id"] == 123
     assert output["incomplete"] is True
     assert "incomplete" in output["warning"]
-    client.get_locations.assert_called_once()
+    client.get_all_locations.assert_called_once()

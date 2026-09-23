@@ -23,7 +23,7 @@ def config():
 @pytest.fixture
 def client():
     client = Mock(spec=OpenAQClient)
-    client.get_location_sensors.return_value = {
+    client.get_all_location_sensors.return_value = {
         "meta": {"found": 4},
         "results": [
             {"id": 101, "name": "Unhelpful name", "parameter": {"name": "pm25"}},
@@ -32,7 +32,7 @@ def client():
             {"id": 104, "parameter": {"name": "so2"}},
         ],
     }
-    client.get_sensor_measurements.return_value = {
+    client.get_all_sensor_measurements.return_value = {
         "meta": {"found": 1, "page": 1, "limit": 1000},
         "results": [
             {
@@ -47,20 +47,20 @@ def client():
 
 
 def test_sensor_selection_requests_and_source_preservation(client, config):
-    source = client.get_sensor_measurements.return_value
+    source = client.get_all_sensor_measurements.return_value
     original = copy.deepcopy(source)
     location = config["locations"][0]
     result = backfill_historical_measurements(
         client, config, "2026-09-01", "2026-09-02", location_id=location["id"]
     )
-    client.get_location_sensors.assert_called_once_with(location["id"])
+    client.get_all_location_sensors.assert_called_once_with(location["id"])
     params = {
         "datetime_from": "2026-09-01",
         "datetime_to": "2026-09-02",
         "limit": 1000,
         "page": 1,
     }
-    assert client.get_sensor_measurements.call_args_list == [
+    assert client.get_all_sensor_measurements.call_args_list == [
         call(101, params=params),
         call(102, params=params),
     ]
@@ -80,7 +80,7 @@ def test_sensor_selection_requests_and_source_preservation(client, config):
 
 
 def test_all_configured_locations_and_missing_sensors(client, config):
-    client.get_location_sensors.side_effect = [
+    client.get_all_location_sensors.side_effect = [
         {"results": []},
         {"results": [{"id": 101, "parameter": {"name": "pm25"}}]},
         *[
@@ -91,7 +91,7 @@ def test_all_configured_locations_and_missing_sensors(client, config):
     result = backfill_historical_measurements(
         client, config, "2026-09-01", "2026-09-02"
     )
-    assert client.get_location_sensors.call_args_list == [
+    assert client.get_all_location_sensors.call_args_list == [
         call(location["id"]) for location in config["locations"]
     ]
     assert result["locations"][0]["missing_parameters"] == ["pm25", "pm10"]
@@ -105,7 +105,7 @@ def test_all_configured_locations_and_missing_sensors(client, config):
     [(2, True), ("2", True), (1, False), ("1", False), (None, None), (">1000", None)],
 )
 def test_measurement_completeness(client, config, found, incomplete):
-    client.get_sensor_measurements.return_value["meta"]["found"] = found
+    client.get_all_sensor_measurements.return_value["meta"]["found"] = found
     result = backfill_historical_measurements(
         client,
         config,
@@ -117,12 +117,12 @@ def test_measurement_completeness(client, config, found, incomplete):
         sensor["found"] == found and sensor["incomplete"] is incomplete
         for sensor in result["sensors"]
     )
-    assert client.get_sensor_measurements.call_count == 2
+    assert client.get_all_sensor_measurements.call_count == 2
 
 
 def test_empty_history_continues(client, config):
-    full = client.get_sensor_measurements.return_value
-    client.get_sensor_measurements.side_effect = [
+    full = client.get_all_sensor_measurements.return_value
+    client.get_all_sensor_measurements.side_effect = [
         {"meta": {"found": 0}, "results": []},
         full,
     ]
@@ -141,7 +141,7 @@ def test_empty_history_continues(client, config):
 
 
 def test_absent_measurement_meta(client, config):
-    client.get_sensor_measurements.return_value = {"results": []}
+    client.get_all_sensor_measurements.return_value = {"results": []}
     result = backfill_historical_measurements(
         client,
         config,
@@ -168,8 +168,8 @@ def test_absent_measurement_meta(client, config):
 def test_invalid_dates_fail_before_http(client, config, start, end):
     with pytest.raises(ValueError, match="dates|later"):
         backfill_historical_measurements(client, config, start, end)
-    client.get_location_sensors.assert_not_called()
-    client.get_sensor_measurements.assert_not_called()
+    client.get_all_location_sensors.assert_not_called()
+    client.get_all_sensor_measurements.assert_not_called()
 
 
 def test_unknown_location_rejected(client, config):
@@ -177,7 +177,7 @@ def test_unknown_location_rejected(client, config):
         backfill_historical_measurements(
             client, config, "2026-09-01", "2026-09-02", location_id=-1
         )
-    client.get_location_sensors.assert_not_called()
+    client.get_all_location_sensors.assert_not_called()
 
 
 def test_cli_summary_without_payloads(client, config, monkeypatch, capsys):
@@ -239,5 +239,5 @@ def test_equal_dates_rejected_before_http(client, config):
     ) as error:
         backfill_historical_measurements(client, config, "2026-09-01", "2026-09-01")
     assert "For a one-day window, use 2026-09-01 to 2026-09-02." in str(error.value)
-    client.get_location_sensors.assert_not_called()
-    client.get_sensor_measurements.assert_not_called()
+    client.get_all_location_sensors.assert_not_called()
+    client.get_all_sensor_measurements.assert_not_called()
