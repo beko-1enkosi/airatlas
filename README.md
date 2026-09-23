@@ -1,6 +1,6 @@
 # AirAtlas
 
-AirAtlas is a Data Engineering portfolio project for building an end-to-end air-quality data platform using public environmental data. It currently acquires OpenAQ air-quality data; Open-Meteo weather integration is planned.
+AirAtlas is a Data Engineering portfolio project for building an end-to-end air-quality data platform using public environmental data. It acquires OpenAQ air-quality data and builds validated observations and partitioned Parquet; Open-Meteo weather integration is planned.
 
 ## Problem statement
 
@@ -14,7 +14,7 @@ Air-quality and weather observations come from separate sources and can vary in 
 - Develop practical skills in data quality, orchestration, testing, and documentation.
 - Eventually serve curated data through an API and dashboard. These are output layers; Data Engineering is the core focus.
 
-## Current acquisition flow
+## Implemented pipeline
 
 ```text
 OpenAQ API v3
@@ -23,7 +23,11 @@ OpenAQ API v3
   -> PM2.5 + PM10 sensor discovery
   -> Historical / checkpoint-based incremental retrieval
   -> Pagination + bounded retries + rate-limit handling
-  -> Deterministic raw JSON data layer
+  -> Immutable raw JSON
+  -> Validation + normalization
+  -> Deduplication + quality checks
+  -> Processed CSV + quality report
+  -> Curated partitioned Parquet
 ```
 
 The approved stations are in [config/mvp_locations.json](config/mvp_locations.json). Raw JSON preserves source measurement objects with location, sensor, window, and retrieval provenance. Identical repeated batches are reused; conflicting content never silently replaces a snapshot.
@@ -31,10 +35,7 @@ The approved stations are in [config/mvp_locations.json](config/mvp_locations.js
 ## Planned architecture
 
 ```text
-Raw air-quality data + future Open-Meteo weather data
-  -> Validation and cleaning
-  -> Pandas transformations
-  -> Partitioned Parquet
+Curated air-quality Parquet + future Open-Meteo weather data
   -> PostgreSQL
   -> dbt analytical models
   -> FastAPI / dashboard serving layer
@@ -42,7 +43,7 @@ Raw air-quality data + future Open-Meteo weather data
 Apache Airflow will orchestrate pipeline stages.
 ```
 
-These processing, weather, database, orchestration, and serving stages are planned. No cleaned/processed datasets or analytics pipeline exist yet. See the [architecture document](docs/architecture.md) for current and future responsibilities.
+Weather integration, database modeling, orchestration, and serving remain planned. See the [architecture document](docs/architecture.md) for current and future responsibilities.
 
 ## Repository structure
 
@@ -60,11 +61,15 @@ AirAtlas/
 |-- scripts/
 |   |-- discover_openaq_locations.py
 |   |-- backfill_openaq_measurements.py
-|   `-- ingest_incremental_openaq.py
+|   |-- ingest_incremental_openaq.py
+|   |-- process_air_quality.py
+|   `-- build_curated_air_quality.py
 |-- src/airatlas/
 |   |-- __init__.py
 |   |-- ingestion/
-|   `-- storage/
+|   |-- storage/
+|   |-- processing/
+|   `-- curation/
 |-- tests/
 |-- .env.example
 |-- .gitignore
@@ -72,7 +77,7 @@ AirAtlas/
 `-- README.md
 ```
 
-`ingestion/` handles OpenAQ retrieval; `storage/` preserves raw batches. `scripts/` provides terminal entry points, and `tests/` covers the client, configuration, ingestion, and persistence offline. Generated data and local credentials are ignored by Git. `processed/` and `curated/` remain placeholders.
+`ingestion/` retrieves OpenAQ data; `storage/` preserves raw batches; `processing/` validates and deduplicates observations; `curation/` publishes Parquet. `scripts/` provides terminal entry points, and `tests/` covers the pipeline offline using temporary datasets. Generated data and local credentials are ignored by Git; the tree shows tracked placeholders, not generated datasets.
 
 ## Current status and milestones
 
@@ -80,9 +85,13 @@ AirAtlas/
 
 **M2 — Data Acquisition: complete**
 
+**M3 — Processing & Quality: complete**
+
 M1 provides Python packaging, a development environment, Ruff, pytest, GitHub Actions CI, and documentation. M2 adds OpenAQ API v3 integration, South African location discovery, six approved MVP stations, PM2.5/PM10 historical backfill and incremental retrieval, automatic pagination, bounded retries, rate-limit handling, and deterministic raw JSON persistence.
 
 AirAtlas can now discover South African OpenAQ sources, retrieve complete historical or incremental PM2.5/PM10 measurements for its configured stations, and preserve those source records in a raw data layer. Retrieval failures are surfaced rather than treated as complete. Incremental checkpoints are supplied explicitly and returned as candidates; durable checkpoint management is not implemented.
+
+M3 adds raw JSON loading, a normalized observation schema, record validation and rejection reporting, duplicate removal and conflict detection, processed CSV and a quality report, and curated Parquet partitioned by pollutant and UTC measurement date. AirAtlas can now transform immutable raw batches into validated, deduplicated observations and publish an analysis-ready dataset. Source units and both measurement-period boundaries are retained; finite negative values are counted rather than scientifically classified or automatically removed.
 
 ## Development
 
@@ -109,9 +118,9 @@ GitHub Actions runs installation and these checks on pushes and pull requests us
 
 1. **Foundation (M1) - complete:** repository structure, development environment, Ruff, pytest, CI, and documentation.
 2. **Data Acquisition (M2) - complete:** OpenAQ discovery, configured PM2.5/PM10 retrieval, API reliability, and raw JSON persistence. Weather integration remains planned.
-3. **Data processing:** validate, clean, transform, and store partitioned Parquet datasets.
+3. **Processing & Quality (M3) - complete:** normalized observations, validation, quality reporting, deduplication, conflict detection, processed CSV, and partitioned Parquet.
 4. **Analytical modeling:** load PostgreSQL and develop dbt models.
 5. **Orchestration and quality:** schedule workflows with Airflow and expand automated checks.
 6. **Serving and presentation:** expose curated data through an API and dashboard, and document the completed platform.
 
-Processing, weather integration, analytical modeling, orchestration, and serving remain planned; no M3 or later functionality is implemented.
+Weather integration, analytical modeling, orchestration, and serving remain planned; no M4 or later functionality is implemented.

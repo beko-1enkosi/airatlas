@@ -43,7 +43,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-Editable installation links the environment to `src/airatlas`, so Python source edits are available without reinstalling. Rerun installation after changing project metadata or dependencies. The `[dev]` extra installs Ruff and pytest; httpx is the application HTTP dependency. `pyproject.toml` is the configuration source for packaging and these tools.
+Editable installation links the environment to `src/airatlas`, so Python source edits are available without reinstalling. Rerun installation after changing project metadata or dependencies. The `[dev]` extra installs Ruff and pytest; application dependencies include httpx for HTTP, Pandas for processing, and PyArrow for Parquet. `pyproject.toml` is the configuration source for packaging and these tools.
 
 Run `deactivate` when finished if you activated the environment. Virtual environments, package metadata, and tool caches are ignored by Git. `.env.example` contains an empty OpenAQ key placeholder. Automated tests require no real credentials; live acquisition reads `OPENAQ_API_KEY` from the process environment and does not automatically load `.env` files.
 
@@ -73,7 +73,7 @@ Ruff targets Python 3.12, uses an 88-character line-length target, and prefers d
 python -m pytest
 ```
 
-pytest automatically discovers tests under `tests/` using the configuration in `pyproject.toml`. The suite covers package import, MVP configuration, discovery, historical/incremental windows, authentication, pagination, retries, and raw persistence. HTTP tests use mocks and storage tests use pytest temporary directories, never the real `data/raw/` directory. No live OpenAQ access is needed.
+pytest automatically discovers tests under `tests/` using the configuration in `pyproject.toml`. The suite covers package import, MVP configuration, discovery, historical/incremental windows, authentication, pagination, retries, raw persistence, processing quality, and curated Parquet rebuilds. HTTP tests use mocks; data tests use pytest temporary directories, never the real repository data layers. No live OpenAQ access is needed.
 
 ## M2 acquisition workflow
 
@@ -119,7 +119,35 @@ Incremental persistence refuses unsafe runs, including missing required sensors 
 
 ## M2 outcome
 
-AirAtlas now retrieves configured South African OpenAQ PM2.5/PM10 measurements with pagination and bounded retries, and preserves complete source batches as deterministic raw JSON. Weather integration, cleaning, transformations, analytical storage, orchestration, and serving remain future work.
+AirAtlas now retrieves configured South African OpenAQ PM2.5/PM10 measurements with pagination and bounded retries, and preserves complete source batches as deterministic raw JSON. M3 extends these raw batches into processed and curated observations. Weather integration, analytical database storage, orchestration, and serving remain future work.
+
+## M3 processing and curation workflow
+
+After acquiring raw batches, run from the repository root:
+
+```bash
+python scripts/process_air_quality.py
+python scripts/build_curated_air_quality.py
+```
+
+The first command reads immutable raw JSON, validates and normalizes observations, removes identical overlaps, and fails on conflicting source observations. Invalid records are excluded with counted reasons. It writes `data/processed/openaq/air_quality_observations.csv` and `quality_report.json`. Inspect rejection, duplicate, negative-value, and parameter/unit counts before analysis. Negative concentrations are retained; no unit conversion or scientific range policy is applied.
+
+The second command reads that CSV and writes Parquet beneath `data/curated/openaq/air_quality/`, partitioned by `parameter` and `measurement_date_utc` (the UTC date of period end). UTC timestamp types and optional nulls are retained. `data/curated/openaq/air_quality_manifest.json` summarizes counts, time coverage, schema columns, and partitions. Duplicate processed observations fail rather than being silently removed again.
+
+For temporary or custom locations:
+
+```bash
+python scripts/process_air_quality.py --raw-dir <raw-root> --output-dir <processed-root>
+python scripts/build_curated_air_quality.py --input-file <processed-root>/openaq/air_quality_observations.csv --output-dir <curated-root>
+```
+
+Use separate raw, processed, and curated roots. The curation builder owns `<curated-root>/openaq/`; keep unrelated files outside that namespace. Both commands print summaries rather than full datasets. Neither needs an API key or network access.
+
+Raw data stays unchanged. Processed CSV, quality reports, curated Parquet, and manifests under `data/` are generated and Git-ignored. Processed and curated outputs are rebuildable snapshots. A curation rebuild validates staged Parquet before replacing the dataset and manifest, so repeated builds do not append duplicate files or retain obsolete partitions. Run only one builder at a time; this is not a transactional store for concurrent readers. A process interruption during publication may require recovery from the retained backup directory.
+
+No raw files causes a clear processing input error. Complete empty raw batches may produce a zero-row CSV; curation rejects empty input and preserves any previous snapshot. Check command success and the manifest before using an existing dataset after a failed rebuild.
+
+**M3 outcome:** AirAtlas transforms immutable OpenAQ batches into validated, deduplicated observations, reports quality outcomes, and publishes an analysis-ready partitioned Parquet dataset. M3 is complete; database, orchestration, weather, API, and dashboard work remains planned.
 
 ## Continuous integration
 
