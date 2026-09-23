@@ -53,6 +53,23 @@ class OpenAQClient:
         Pass query parameters such as {"limit": 10, "page": 1}. Responses are
         returned unchanged; no records are persisted or additional pages fetched.
         """
+        return self._get("locations", params)
+
+    def get_location_sensors(self, location_id: int) -> Any:
+        """Return sensors attached to a location, without additional requests."""
+        return self._get(f"locations/{location_id}/sensors")
+
+    def get_sensor_measurements(
+        self, sensor_id: int, params: Mapping[str, str | int | float | bool]
+    ) -> Any:
+        """Return one page of original measurements for a sensor."""
+        return self._get(f"sensors/{sensor_id}/measurements", params)
+
+    def _get(
+        self,
+        resource: str,
+        params: Mapping[str, str | int | float | bool] | None = None,
+    ) -> Any:
         try:
             with httpx.Client(
                 base_url=self._base_url,
@@ -61,18 +78,18 @@ class OpenAQClient:
                 transport=self._transport,
                 follow_redirects=False,
             ) as client:
-                response = client.get("locations", params=params)
+                response = client.get(resource, params=params)
                 response.raise_for_status()
                 return response.json()
         except httpx.HTTPStatusError as exc:
             raise OpenAQClientError(
-                f"OpenAQ locations request failed with HTTP {exc.response.status_code}."
+                f"OpenAQ {resource} request failed with HTTP {exc.response.status_code}."
             ) from None
         except httpx.RequestError:
             raise OpenAQClientError(
-                "OpenAQ locations request failed during HTTP communication."
+                f"OpenAQ {resource} request failed during HTTP communication."
             ) from None
         except ValueError:
             raise OpenAQClientError(
-                "OpenAQ locations response was not valid JSON."
+                f"OpenAQ {resource} response was not valid JSON."
             ) from None
