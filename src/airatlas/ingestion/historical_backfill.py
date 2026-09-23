@@ -1,4 +1,4 @@
-"""Explicit date-range backfill; single pages only, with no persistence."""
+"""Explicit date-range backfill; paginated retrieval with no persistence."""
 
 from datetime import date
 from typing import Any

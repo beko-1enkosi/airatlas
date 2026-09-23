@@ -1,4 +1,4 @@
-"""Inspect one page of South African OpenAQ location metadata."""
+"""Inspect paginated South African OpenAQ location metadata."""
 
 from typing import Any
 
@@ -6,13 +6,13 @@ from airatlas.ingestion.openaq import OpenAQClient
 
 
 def discover_south_african_locations(client: OpenAQClient) -> dict[str, Any]:
-    """Return location summaries and first-page completeness information.
+    """Return location summaries and retrieval completeness information.
 
     Missing optional fields remain None (JSON null). An empty parameters list
     means no parameter names were supplied, not that no pollutants are measured.
     Incomplete is None when meta.found is missing or is not an exact count.
     """
-    response = client.get_locations({"iso": "ZA", "page": 1, "limit": 1000})
+    response = client.get_all_locations({"iso": "ZA", "page": 1, "limit": 1000})
     locations = []
     for location in response["results"]:
         coordinates = location.get("coordinates") or {}
@@ -46,6 +46,8 @@ def discover_south_african_locations(client: OpenAQClient) -> dict[str, Any]:
     elif isinstance(found, str) and found.strip().isascii() and found.strip().isdigit():
         total = int(found)
     incomplete = total > len(locations) if total is not None else None
+    if response.get("pagination", {}).get("complete") is True:
+        incomplete = False
     warning = None
     if incomplete:
         warning = "Results are incomplete: OpenAQ reports more locations than this page contains."
@@ -53,7 +55,7 @@ def discover_south_african_locations(client: OpenAQClient) -> dict[str, Any]:
         warning = "Completeness is unknown: OpenAQ did not supply an exact total count."
 
     return {
-        "page": 1,
+        "pagination": response.get("pagination"),
         "limit": 1000,
         "found": found,
         "returned": len(locations),

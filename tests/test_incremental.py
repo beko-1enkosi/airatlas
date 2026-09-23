@@ -25,7 +25,7 @@ def config():
 @pytest.fixture
 def client():
     client = Mock(spec=OpenAQClient)
-    client.get_location_sensors.return_value = {
+    client.get_all_location_sensors.return_value = {
         "meta": {"found": 3},
         "results": [
             {"id": 101, "parameter": {"name": "pm25"}},
@@ -33,7 +33,7 @@ def client():
             {"id": 103, "parameter": {"name": "no2"}},
         ],
     }
-    client.get_sensor_measurements.return_value = {
+    client.get_all_sensor_measurements.return_value = {
         "meta": {"found": 1},
         "results": [
             {
@@ -48,13 +48,13 @@ def client():
 
 
 def test_narrow_window_provenance_and_candidate(client, config):
-    original = copy.deepcopy(client.get_sensor_measurements.return_value)
+    original = copy.deepcopy(client.get_all_sensor_measurements.return_value)
     location = config["locations"][0]
     result = ingest_incremental_measurements(
         client, config, START, END, location_id=location["id"]
     )
     params = {"datetime_from": START, "datetime_to": END, "limit": 1000, "page": 1}
-    assert client.get_sensor_measurements.call_args_list == [
+    assert client.get_all_sensor_measurements.call_args_list == [
         call(101, params=params),
         call(102, params=params),
     ]
@@ -70,17 +70,17 @@ def test_narrow_window_provenance_and_candidate(client, config):
         assert sensor["sensor_id"] in {101, 102}
         assert sensor["results"] == original["results"]
         assert sensor["meta"] == original["meta"]
-    assert client.get_sensor_measurements.return_value == original
+    assert client.get_all_sensor_measurements.return_value == original
 
 
 def test_all_configured_locations(client, config):
     result = ingest_incremental_measurements(client, config, START, END)
     ids = [location["id"] for location in config["locations"]]
-    assert client.get_location_sensors.call_args_list == [
+    assert client.get_all_location_sensors.call_args_list == [
         call(location_id) for location_id in ids
     ]
     assert result["location_ids"] == ids
-    assert client.get_sensor_measurements.call_count == 2 * len(ids)
+    assert client.get_all_sensor_measurements.call_count == 2 * len(ids)
     assert result["checkpoint_safe"] is True
 
 
@@ -95,11 +95,12 @@ def test_timezone_offsets_normalized(client, config):
     assert result["checkpoint"] == START
     assert result["next_checkpoint_candidate"] == END
     assert (
-        client.get_sensor_measurements.call_args.kwargs["params"]["datetime_from"]
+        client.get_all_sensor_measurements.call_args.kwargs["params"]["datetime_from"]
         == START
     )
     assert (
-        client.get_sensor_measurements.call_args.kwargs["params"]["datetime_to"] == END
+        client.get_all_sensor_measurements.call_args.kwargs["params"]["datetime_to"]
+        == END
     )
 
 
@@ -118,12 +119,15 @@ def test_timezone_offsets_normalized(client, config):
 def test_invalid_window_before_requests(client, config, checkpoint, end):
     with pytest.raises(ValueError, match="timezone|strictly later"):
         ingest_incremental_measurements(client, config, checkpoint, end)
-    client.get_location_sensors.assert_not_called()
-    client.get_sensor_measurements.assert_not_called()
+    client.get_all_location_sensors.assert_not_called()
+    client.get_all_sensor_measurements.assert_not_called()
 
 
 def test_empty_complete_window_advances_candidate(client, config):
-    client.get_sensor_measurements.return_value = {"meta": {"found": 0}, "results": []}
+    client.get_all_sensor_measurements.return_value = {
+        "meta": {"found": 0},
+        "results": [],
+    }
     result = ingest_incremental_measurements(client, config, START, END)
     assert all(sensor["returned"] == 0 for sensor in result["sensors"])
     assert result["checkpoint_safe"] is True
@@ -132,10 +136,10 @@ def test_empty_complete_window_advances_candidate(client, config):
 
 @pytest.mark.parametrize("found", [2, "2", None, ">1000"])
 def test_one_incomplete_or_unknown_response_is_unsafe(client, config, found):
-    complete = copy.deepcopy(client.get_sensor_measurements.return_value)
+    complete = copy.deepcopy(client.get_all_sensor_measurements.return_value)
     other = copy.deepcopy(complete)
     other["meta"]["found"] = found
-    client.get_sensor_measurements.side_effect = [complete, other]
+    client.get_all_sensor_measurements.side_effect = [complete, other]
     result = ingest_incremental_measurements(
         client, config, START, END, location_id=config["locations"][0]["id"]
     )
@@ -143,19 +147,19 @@ def test_one_incomplete_or_unknown_response_is_unsafe(client, config, found):
     assert result["status"] == "not_complete"
     assert result["unsafe_reasons"]
     assert result["next_checkpoint_candidate"] == END
-    assert client.get_sensor_measurements.call_count == 2
+    assert client.get_all_sensor_measurements.call_count == 2
 
 
 @pytest.mark.parametrize("found", [4, None])
 def test_sensor_discovery_incomplete_or_unknown(client, config, found):
-    client.get_location_sensors.return_value["meta"]["found"] = found
+    client.get_all_location_sensors.return_value["meta"]["found"] = found
     result = ingest_incremental_measurements(client, config, START, END)
     assert result["checkpoint_safe"] is False
     assert any("sensor discovery" in reason for reason in result["unsafe_reasons"])
 
 
 def test_missing_required_sensor(client, config):
-    client.get_location_sensors.return_value = {
+    client.get_all_location_sensors.return_value = {
         "meta": {"found": 1},
         "results": [{"id": 101, "parameter": {"name": "pm25"}}],
     }
@@ -170,16 +174,16 @@ def test_missing_required_sensor(client, config):
 def test_unknown_location_before_requests(client, config):
     with pytest.raises(ValueError, match="approved MVP"):
         ingest_incremental_measurements(client, config, START, END, location_id=-1)
-    client.get_location_sensors.assert_not_called()
+    client.get_all_location_sensors.assert_not_called()
 
 
 def test_http_failure_does_not_return_candidate(client, config):
-    client.get_sensor_measurements.side_effect = OpenAQClientError(
+    client.get_all_sensor_measurements.side_effect = OpenAQClientError(
         "HTTP communication failed"
     )
     with pytest.raises(OpenAQClientError):
         ingest_incremental_measurements(client, config, START, END)
-    assert client.get_sensor_measurements.call_count == 1
+    assert client.get_all_sensor_measurements.call_count == 1
 
 
 def test_cli_summary(client, config, monkeypatch, capsys):

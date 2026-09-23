@@ -30,7 +30,9 @@ def test_locations_request(monkeypatch):
         assert request.extensions["timeout"]["read"] == 10.0
         return httpx.Response(200, json=payload)
 
-    client = OpenAQClient("fake-test-key", transport=httpx.MockTransport(handler))
+    client = OpenAQClient(
+        "fake-test-key", transport=httpx.MockTransport(handler), max_retries=0
+    )
     assert client.get_locations({"limit": 5, "page": 2, "parameters_id": 2}) == payload
     assert len(requests) == 1
 
@@ -42,7 +44,7 @@ def test_environment_key(monkeypatch):
         assert request.headers["X-API-Key"] == "fake-environment-key"
         return httpx.Response(200, json={"results": []})
 
-    client = OpenAQClient(transport=httpx.MockTransport(handler))
+    client = OpenAQClient(transport=httpx.MockTransport(handler), max_retries=0)
     assert client.get_locations() == {"results": []}
 
 
@@ -61,7 +63,9 @@ def test_http_failure(status):
         requests.append(request)
         return httpx.Response(status, text="fake-test-key")
 
-    client = OpenAQClient("fake-test-key", transport=httpx.MockTransport(handler))
+    client = OpenAQClient(
+        "fake-test-key", transport=httpx.MockTransport(handler), max_retries=0
+    )
     with pytest.raises(OpenAQClientError, match=f"HTTP {status}") as error:
         client.get_locations()
     assert "fake-test-key" not in "".join(traceback.format_exception(error.value))
@@ -72,7 +76,9 @@ def test_timeout():
     def handler(request):
         raise httpx.ReadTimeout("fake-test-key", request=request)
 
-    client = OpenAQClient("fake-test-key", transport=httpx.MockTransport(handler))
+    client = OpenAQClient(
+        "fake-test-key", transport=httpx.MockTransport(handler), max_retries=0
+    )
     with pytest.raises(OpenAQClientError, match="HTTP communication") as error:
         client.get_locations()
     assert "fake-test-key" not in "".join(traceback.format_exception(error.value))
@@ -110,7 +116,9 @@ def test_sensor_resource_endpoints(resource):
         assert request.method == "GET"
         return httpx.Response(200, json=payload)
 
-    client = OpenAQClient("fake-test-key", transport=httpx.MockTransport(handler))
+    client = OpenAQClient(
+        "fake-test-key", transport=httpx.MockTransport(handler), max_retries=0
+    )
     if resource == "sensors":
         assert client.get_location_sensors(123) == payload
         assert requests[0].url.path == "/v3/locations/123/sensors"
