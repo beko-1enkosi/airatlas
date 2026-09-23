@@ -91,3 +91,33 @@ def test_invalid_key_is_not_exposed():
     with pytest.raises(OpenAQConfigurationError) as error:
         OpenAQClient("fake-test-key\n")
     assert "fake-test-key" not in str(error.value)
+
+
+@pytest.mark.parametrize("resource", ["sensors", "measurements"])
+def test_sensor_resource_endpoints(resource):
+    requests = []
+    params = {
+        "datetime_from": "2026-09-01",
+        "datetime_to": "2026-09-02",
+        "limit": 1000,
+        "page": 1,
+    }
+    payload = {"meta": {"found": 0}, "results": []}
+
+    def handler(request):
+        requests.append(request)
+        assert request.headers["X-API-Key"] == "fake-test-key"
+        assert request.method == "GET"
+        return httpx.Response(200, json=payload)
+
+    client = OpenAQClient("fake-test-key", transport=httpx.MockTransport(handler))
+    if resource == "sensors":
+        assert client.get_location_sensors(123) == payload
+        assert requests[0].url.path == "/v3/locations/123/sensors"
+    else:
+        assert client.get_sensor_measurements(456, params) == payload
+        assert requests[0].url.path == "/v3/sensors/456/measurements"
+        assert dict(requests[0].url.params) == {
+            key: str(value) for key, value in params.items()
+        }
+    assert len(requests) == 1
