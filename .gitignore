@@ -65,3 +65,9 @@ dist/
 !/data/processed/.gitkeep
 /data/curated/*
 !/data/curated/.gitkeep
+
+# dbt-generated artifacts; project, profiles, models and tests remain tracked.
+/dbt/target/
+/dbt/logs/
+/dbt/dbt_packages/
+/dbt/.user.yml

@@ -34,3 +34,14 @@ jobs:
 
       - name: Run tests
         run: python -m pytest
+
+      - name: Parse dbt project (no database required)
+        env:
+          AIRATLAS_DB_HOST: localhost
+          AIRATLAS_DB_PORT: "5432"
+          AIRATLAS_DB_NAME: airatlas
+          AIRATLAS_DB_USER: parse_only
+          AIRATLAS_DB_PASSWORD: unused_placeholder
+          AIRATLAS_DBT_SCHEMA: airatlas_analytics
+          DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+        run: dbt parse --project-dir dbt --profiles-dir dbt
