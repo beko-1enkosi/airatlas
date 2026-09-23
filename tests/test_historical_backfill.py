@@ -180,7 +180,7 @@ def test_unknown_location_rejected(client, config):
     client.get_all_location_sensors.assert_not_called()
 
 
-def test_cli_summary_without_payloads(client, config, monkeypatch, capsys):
+def test_cli_summary_without_payloads(client, config, monkeypatch, capsys, tmp_path):
     location_id = config["locations"][0]["id"]
     monkeypatch.setattr("airatlas.ingestion.openaq.OpenAQClient", lambda: client)
     monkeypatch.setattr(
@@ -194,6 +194,8 @@ def test_cli_summary_without_payloads(client, config, monkeypatch, capsys):
             "2026-09-02",
             "--location-id",
             str(location_id),
+            "--output-dir",
+            str(tmp_path),
         ],
     )
     runpy.run_path(
@@ -201,6 +203,8 @@ def test_cli_summary_without_payloads(client, config, monkeypatch, capsys):
     )
     summary = json.loads(capsys.readouterr().out)
     assert summary["locations_considered"] == 1
+    assert summary["persistence"]["batches_written"] == 2
+    assert len(list(tmp_path.rglob("*.json"))) == 2
     assert summary["matching_sensors_queried"] == 2
     assert summary["measurements_returned"] == 2
     assert summary["incomplete_responses"] == summary["empty_responses"] == 0
