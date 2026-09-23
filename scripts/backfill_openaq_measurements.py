@@ -1,4 +1,4 @@
-"""Print a historical backfill summary without saving measurement payloads."""
+"""Retrieve historical measurements, persist raw JSON, and print a summary."""
 
 import argparse
 import json
@@ -14,6 +14,7 @@ from airatlas.ingestion.openaq import (
     OpenAQClientError,
     OpenAQConfigurationError,
 )
+from airatlas.storage.raw import persist_raw_run
 
 
 def main() -> None:
@@ -33,6 +34,12 @@ def main() -> None:
     parser.add_argument(
         "--location-id", type=int, help="Restrict to one approved MVP location"
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "data/raw",
+        help="Raw JSON output root (default: repository data/raw)",
+    )
     args = parser.parse_args()
     config_path = Path(__file__).resolve().parents[1] / "config/mvp_locations.json"
     try:
@@ -46,6 +53,7 @@ def main() -> None:
             args.date_to,
             location_id=args.location_id,
         )
+        persistence = persist_raw_run(result, args.output_dir)
     except (OSError, ValueError, OpenAQConfigurationError, OpenAQClientError) as exc:
         parser.error(str(exc))
 
@@ -78,6 +86,7 @@ def main() -> None:
             for sensor in sensors
         ],
     }
+    summary["persistence"] = persistence
     print(json.dumps(summary, indent=2))
 
 

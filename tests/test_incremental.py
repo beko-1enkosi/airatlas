@@ -186,7 +186,7 @@ def test_http_failure_does_not_return_candidate(client, config):
     assert client.get_all_sensor_measurements.call_count == 1
 
 
-def test_cli_summary(client, config, monkeypatch, capsys):
+def test_cli_summary(client, config, monkeypatch, capsys, tmp_path):
     monkeypatch.setattr("airatlas.ingestion.openaq.OpenAQClient", lambda: client)
     location_id = config["locations"][0]["id"]
     monkeypatch.setattr(
@@ -200,6 +200,8 @@ def test_cli_summary(client, config, monkeypatch, capsys):
             END,
             "--location-id",
             str(location_id),
+            "--output-dir",
+            str(tmp_path),
         ],
     )
     runpy.run_path(
@@ -207,6 +209,8 @@ def test_cli_summary(client, config, monkeypatch, capsys):
     )
     output = json.loads(capsys.readouterr().out)
     assert output["locations_considered"] == 1
+    assert output["persistence"]["batches_written"] == 2
+    assert len(list(tmp_path.rglob("*.json"))) == 2
     assert output["measurements_by_parameter"] == {"pm25": 1, "pm10": 1}
     assert output["total_measurements"] == 2
     assert output["checkpoint_safe"] is True

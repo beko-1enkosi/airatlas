@@ -1,4 +1,4 @@
-"""Print an incremental retrieval summary; never persist data or checkpoints."""
+"""Persist safe incremental raw batches and print a checkpoint candidate; never save checkpoint state."""
 
 import argparse
 import json
@@ -10,6 +10,7 @@ from airatlas.ingestion.incremental import (
 )
 from airatlas.ingestion.measurement_window import load_mvp_config, select_mvp_locations
 from airatlas.ingestion.openaq import OpenAQClient, OpenAQClientError
+from airatlas.storage.raw import persist_raw_run
 
 
 def main() -> None:
@@ -29,6 +30,12 @@ def main() -> None:
         type=int,
         help="One approved MVP location; checkpoint safety applies only to this subset",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "data/raw",
+        help="Raw JSON output root (default: repository data/raw)",
+    )
     args = parser.parse_args()
     try:
         config = load_mvp_config(
@@ -39,6 +46,7 @@ def main() -> None:
         result = ingest_incremental_measurements(
             OpenAQClient(), config, start, end, location_id=args.location_id
         )
+        persistence = persist_raw_run(result, args.output_dir)
     except (OSError, ValueError, OpenAQClientError) as exc:
         parser.error(str(exc))
     sensors = result["sensors"]
@@ -84,6 +92,7 @@ def main() -> None:
             ],
         }
     )
+    summary["persistence"] = persistence
     print(json.dumps(summary, indent=2))
 
 

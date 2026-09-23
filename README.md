@@ -1,6 +1,6 @@
 # AirAtlas
 
-AirAtlas is a Data Engineering portfolio project for building an end-to-end air-quality data platform using public environmental data. It will initially work with sources such as OpenAQ air-quality data and Open-Meteo weather data.
+AirAtlas is a Data Engineering portfolio project for building an end-to-end air-quality data platform using public environmental data. It currently acquires OpenAQ air-quality data; Open-Meteo weather integration is planned.
 
 ## Problem statement
 
@@ -14,84 +14,75 @@ Air-quality and weather observations come from separate sources and can vary in 
 - Develop practical skills in data quality, orchestration, testing, and documentation.
 - Eventually serve curated data through an API and dashboard. These are output layers; Data Engineering is the core focus.
 
+## Current acquisition flow
+
+```text
+OpenAQ API v3
+  -> South African location discovery
+  -> 6 configured MVP monitoring locations
+  -> PM2.5 + PM10 sensor discovery
+  -> Historical / checkpoint-based incremental retrieval
+  -> Pagination + bounded retries + rate-limit handling
+  -> Deterministic raw JSON data layer
+```
+
+The approved stations are in [config/mvp_locations.json](config/mvp_locations.json). Raw JSON preserves source measurement objects with location, sensor, window, and retrieval provenance. Identical repeated batches are reused; conflicting content never silently replaces a snapshot.
+
 ## Planned architecture
 
 ```text
-Public air-quality and weather data
-  → Python ingestion
-  → Raw data storage
-  → Validation and cleaning
-  → Pandas transformations
-  → Partitioned Parquet
-  → PostgreSQL
-  → dbt transformations
-  → API / dashboard serving layer
+Raw air-quality data + future Open-Meteo weather data
+  -> Validation and cleaning
+  -> Pandas transformations
+  -> Partitioned Parquet
+  -> PostgreSQL
+  -> dbt analytical models
+  -> FastAPI / dashboard serving layer
 
-Apache Airflow will orchestrate the pipeline stages.
+Apache Airflow will orchestrate pipeline stages.
 ```
 
-This architecture is planned. No pipeline stages or integrations are implemented yet. See the [architecture document](docs/architecture.md) for data layers and intended technology roles.
-
-## Planned technology stack
-
-| Technology | Intended role |
-| --- | --- |
-| Python | Ingestion, validation, and processing |
-| Pandas | Tabular data transformations |
-| Parquet | Partitioned file storage |
-| PostgreSQL | Analytical data storage |
-| dbt | SQL transformations and data models |
-| Apache Airflow | Workflow scheduling and orchestration |
-| FastAPI | Serving curated data through an API |
-
-Current foundation tooling includes Python packaging, Ruff linting and formatting, pytest, and GitHub Actions CI. The pipeline roles above are planned. A dashboard technology has not been selected.
+These processing, weather, database, orchestration, and serving stages are planned. No cleaned/processed datasets or analytics pipeline exist yet. See the [architecture document](docs/architecture.md) for current and future responsibilities.
 
 ## Repository structure
 
 ```text
 AirAtlas/
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-├── src/
-│   └── airatlas/
-│       └── __init__.py
-├── tests/
-│   └── test_package.py
-├── data/
-│   ├── raw/
-│   │   └── .gitkeep
-│   ├── processed/
-│   │   └── .gitkeep
-│   └── curated/
-│       └── .gitkeep
-├── docs/
-│   ├── architecture.md
-│   └── development.md
-├── scripts/
-│   └── .gitkeep
-├── .env.example
-├── .gitignore
-├── pyproject.toml
-└── README.md
+|-- .github/workflows/ci.yml
+|-- config/mvp_locations.json
+|-- data/
+|   |-- raw/.gitkeep
+|   |-- processed/.gitkeep
+|   `-- curated/.gitkeep
+|-- docs/
+|   |-- architecture.md
+|   `-- development.md
+|-- scripts/
+|   |-- discover_openaq_locations.py
+|   |-- backfill_openaq_measurements.py
+|   `-- ingest_incremental_openaq.py
+|-- src/airatlas/
+|   |-- __init__.py
+|   |-- ingestion/
+|   `-- storage/
+|-- tests/
+|-- .env.example
+|-- .gitignore
+|-- pyproject.toml
+`-- README.md
 ```
 
-- `.github/workflows/`: GitHub Actions CI configuration.
-- `src/`: future Python application code, with a minimal `airatlas` package placeholder.
-- `tests/`: automated tests, currently one package-import smoke test.
-- `data/`: local datasets; `raw/` will hold source observations, `processed/` cleaned intermediate data, and `curated/` analysis-ready outputs. Generated datasets are excluded from Git.
-- `docs/`: planned architecture and development instructions.
-- `scripts/`: future development and maintenance utilities.
+`ingestion/` handles OpenAQ retrieval; `storage/` preserves raw batches. `scripts/` provides terminal entry points, and `tests/` covers the client, configuration, ingestion, and persistence offline. Generated data and local credentials are ignored by Git. `processed/` and `curated/` remain placeholders.
 
-The `.gitkeep` files preserve empty directories in Git. `.env.example` contains only commented configuration placeholders.
-
-## Current status and milestone
+## Current status and milestones
 
 **M1 — Foundation: complete**
 
-The foundation includes the Python `src/` project structure, setuptools packaging, editable development environment, Ruff linting and formatting, pytest with a package-import smoke test, GitHub Actions CI, and project documentation.
+**M2 — Data Acquisition: complete**
 
-The package remains a placeholder with no application logic or runtime dependencies. Ingestion, source integrations, transformations, Parquet output, PostgreSQL, dbt, Airflow, FastAPI, and the dashboard are planned for later milestones.
+M1 provides Python packaging, a development environment, Ruff, pytest, GitHub Actions CI, and documentation. M2 adds OpenAQ API v3 integration, South African location discovery, six approved MVP stations, PM2.5/PM10 historical backfill and incremental retrieval, automatic pagination, bounded retries, rate-limit handling, and deterministic raw JSON persistence.
+
+AirAtlas can now discover South African OpenAQ sources, retrieve complete historical or incremental PM2.5/PM10 measurements for its configured stations, and preserve those source records in a raw data layer. Retrieval failures are surfaced rather than treated as complete. Incremental checkpoints are supplied explicitly and returned as candidates; durable checkpoint management is not implemented.
 
 ## Development
 
@@ -117,10 +108,10 @@ GitHub Actions runs installation and these checks on pushes and pull requests us
 ## Roadmap
 
 1. **Foundation (M1) - complete:** repository structure, development environment, Ruff, pytest, CI, and documentation.
-2. **Data acquisition:** ingest public air-quality and weather observations and preserve raw data.
+2. **Data Acquisition (M2) - complete:** OpenAQ discovery, configured PM2.5/PM10 retrieval, API reliability, and raw JSON persistence. Weather integration remains planned.
 3. **Data processing:** validate, clean, transform, and store partitioned Parquet datasets.
 4. **Analytical modeling:** load PostgreSQL and develop dbt models.
 5. **Orchestration and quality:** schedule workflows with Airflow and expand automated checks.
 6. **Serving and presentation:** expose curated data through an API and dashboard, and document the completed platform.
 
-All roadmap work after M1 is planned and has not yet been implemented.
+Processing, weather integration, analytical modeling, orchestration, and serving remain planned; no M3 or later functionality is implemented.
