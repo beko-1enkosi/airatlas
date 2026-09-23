@@ -1,0 +1,58 @@
+{
+  "name": "AirAtlas MVP monitoring locations",
+  "country_code": "ZA",
+  "selection": {
+    "location_count": 6,
+    "required_parameters": [
+      "pm25",
+      "pm10"
+    ],
+    "criteria": [
+      "fixed monitoring location",
+      "coordinates available",
+      "PM2.5 available",
+      "PM10 available",
+      "geographic diversity across South Africa",
+      "stable OpenAQ numeric location IDs",
+      "manageable MVP scope"
+    ]
+  },
+  "locations": [
+    {
+      "id": 225448,
+      "name": "Jabavu-NAQI",
+      "locality": "City of Johannesburg",
+      "country_code": "ZA"
+    },
+    {
+      "id": 225404,
+      "name": "Table View-NAQI",
+      "locality": "Western Cape",
+      "country_code": "ZA"
+    },
+    {
+      "id": 6868,
+      "name": "Brackenham - RBCAA",
+      "locality": "KwaZulu-Natal",
+      "country_code": "ZA"
+    },
+    {
+      "id": 225396,
+      "name": "Saltworks-NAQI",
+      "locality": "Eastern Cape",
+      "country_code": "ZA"
+    },
+    {
+      "id": 925659,
+      "name": "Good Hope School",
+      "locality": "Polokwane",
+      "country_code": "ZA"
+    },
+    {
+      "id": 355971,
+      "name": "Ratanang",
+      "locality": "North West",
+      "country_code": "ZA"
+    }
+  ]
+}
