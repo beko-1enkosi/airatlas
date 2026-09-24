@@ -102,6 +102,10 @@ def prepare_input(input_dir):
     if not table.num_rows:
         raise WarehouseError("Enriched input is empty; warehouse refresh refused.")
     for column in ("datetime_from_utc", "datetime_to_utc", "weather_hour_utc"):
+        if column == "weather_hour_utc" and pa.types.is_null(
+            table.schema.field(column).type
+        ):
+            continue
         if not pa.types.is_timestamp(table.schema.field(column).type):
             raise WarehouseError(f"{column} must have a timestamp type.")
     records, seen, dimensions = [], set(), {}
@@ -121,9 +125,25 @@ def prepare_input(input_dir):
             raise WarehouseError("Observation unit must not be empty.")
         if row["datetime_to_utc"] <= row["datetime_from_utc"]:
             raise WarehouseError("Observation period end must be later than start.")
-        if row["measurement_date_utc"] != row["datetime_to_utc"].date() or row[
-            "weather_hour_utc"
-        ] != row["datetime_to_utc"].replace(minute=0, second=0, microsecond=0):
+        weather_hour = row["weather_hour_utc"]
+        # Enrichment may retain the requested join hour even without a match.
+        # A missing hour is also valid for an entirely absent weather context.
+        if row["weather_source"] is not None:
+            if row["weather_source"] != "open_meteo" or weather_hour is None:
+                raise WarehouseError(
+                    "Weather context requires open_meteo and a valid weather_hour_utc."
+                )
+        elif any(
+            row[column] is not None
+            for column in WEATHER_COLUMNS
+            if column not in {"weather_hour_utc", "weather_source"}
+        ):
+            raise WarehouseError("Weather values require a weather_source.")
+        if row["measurement_date_utc"] != row["datetime_to_utc"].date() or (
+            weather_hour is not None
+            and weather_hour
+            != row["datetime_to_utc"].replace(minute=0, second=0, microsecond=0)
+        ):
             raise WarehouseError(
                 "Partition date or weather hour disagrees with period end."
             )

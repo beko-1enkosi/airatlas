@@ -191,12 +191,80 @@ def test_mapping_and_hive_input(tmp_path, records):
     assert type(rows[0]["datetime_to_utc"]) is datetime
     assert rows[0]["datetime_to_utc"].utcoffset().total_seconds() == 0
     assert rows[0]["value"] == 12.3
+    assert rows[0]["weather_hour_utc"] == records[0]["weather_hour_utc"]
+    assert rows[0]["weather_source"] == "open_meteo"
+    assert rows[0]["temperature_2m_c"] == 22.0
     assert rows[1]["parameter_id"] is None
     assert rows[1]["temperature_2m_c"] is None and rows[1]["weather_source"] is None
     assert rows[1]["value"] == -0.1
     assert rows[0]["measurement_date_utc"].isoformat() == "2024-01-01"
     assert summary["weather_matched_rows"] == summary["weather_unmatched_rows"] == 1
     assert all(p.read_bytes() == content for p, content in original.items())
+
+
+@pytest.mark.parametrize("retain_join_hour", [False, True])
+def test_unmatched_weather_loads_as_sql_nulls(
+    tmp_path, records, database, retain_join_hour
+):
+    unmatched = records[1]
+    if not retain_join_hour:
+        unmatched["weather_hour_utc"] = None
+    summary = load_postgres_warehouse(parquet_input(tmp_path, [unmatched]))
+    row = dict(zip(schema.OBSERVATION_COLUMNS, database.observations[0], strict=True))
+    for column in loader.WEATHER_COLUMNS:
+        assert row[column] == unmatched[column]
+        if column != "weather_hour_utc" or not retain_join_hour:
+            assert row[column] is None
+    assert row["value"] == -0.1
+    assert summary["weather_unmatched_rows"] == 1
+    assert summary["weather_matched_rows"] == 0
+    assert database.commits == 1
+
+
+def test_all_null_weather_hour_arrow_type(tmp_path, records):
+    import pyarrow.parquet as pq
+
+    unmatched = records[1]
+    unmatched["weather_hour_utc"] = None
+    path = parquet_input(tmp_path, [unmatched])
+    table = pq.read_table(path / "part.parquet")
+    index = table.schema.get_field_index("weather_hour_utc")
+    table = table.set_column(index, "weather_hour_utc", pa.nulls(1))
+    pq.write_table(table, path / "part.parquet")
+    _, observations, summary = prepare_input(path)
+    assert observations[0][index] is None
+    assert summary["weather_unmatched_rows"] == 1
+
+
+def test_partial_matched_weather_is_valid(tmp_path, records, database):
+    records[0]["temperature_2m_c"] = None
+    records[0]["weather_latitude"] = None
+    records[0]["weather_longitude"] = None
+    summary = load_postgres_warehouse(parquet_input(tmp_path, [records[0]]))
+    row = dict(zip(schema.OBSERVATION_COLUMNS, database.observations[0], strict=True))
+    assert row["temperature_2m_c"] is None
+    assert row["weather_latitude"] is None and row["weather_longitude"] is None
+    assert row["relative_humidity_2m_pct"] == 50.0
+    assert summary["weather_matched_rows"] == 1
+
+
+@pytest.mark.parametrize(
+    ("record_index", "column", "value", "message"),
+    [
+        (0, "weather_hour_utc", None, "Weather context requires"),
+        (0, "weather_source", "", "Weather context requires"),
+        (1, "temperature_2m_c", 20.0, "Weather values require"),
+        (1, "weather_latitude", -26.2, "Weather values require"),
+        (1, "weather_hour_utc", datetime(2024, 1, 1, 9, tzinfo=UTC), "weather hour"),
+    ],
+)
+def test_inconsistent_weather_context_rejected(
+    tmp_path, records, database, record_index, column, value, message
+):
+    records[record_index][column] = value
+    with pytest.raises(WarehouseError, match=message):
+        load_postgres_warehouse(parquet_input(tmp_path, records))
+    assert not database.statements  # Invalid input fails before any database mutation.
 
 
 @pytest.mark.parametrize(
@@ -273,7 +341,13 @@ def test_schema_constraints_and_indexes():
     assert "(parameter, datetime_to_utc)" in sql
     assert "(measurement_date_utc)" in sql
     assert "TIMESTAMPTZ" in sql
-    assert "DROP" not in sql and "CASCADE" not in sql and "public." not in sql
+    assert "DROP TABLE" not in sql and "DROP SCHEMA" not in sql
+    assert "CASCADE" not in sql and "public." not in sql
+    assert schema.OBSERVATION_TYPES["weather_hour_utc"] == "TIMESTAMPTZ"
+    assert (
+        "ALTER TABLE airatlas.observations ALTER COLUMN weather_hour_utc DROP NOT NULL"
+        in sql
+    )
 
 
 def test_dsn_forwarded_and_repeated_refresh(tmp_path, records, database, monkeypatch):

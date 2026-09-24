@@ -89,8 +89,6 @@ models:
         description: "Requested source retrieval upper boundary, preserved as date or timestamp text."
       - name: weather_hour_utc
         description: "UTC measurement-period end floored to an hour for exact location/hour weather matching."
-        data_tests:
-          - not_null
       - name: temperature_2m_c
         description: "Historical 2-metre temperature in Celsius; unavailable values remain null."
       - name: relative_humidity_2m_pct

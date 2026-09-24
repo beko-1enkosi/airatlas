@@ -43,7 +43,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-Editable installation links the environment to `src/airatlas`, so Python source edits are available without reinstalling. Rerun installation after changing project metadata or dependencies. The `[dev]` extra installs Ruff and pytest; application dependencies include httpx for HTTP, Pandas for processing, PyArrow for Parquet, and Psycopg 3 for PostgreSQL. `pyproject.toml` is the configuration source for packaging and these tools.
+Editable installation links the environment to `src/airatlas`, so Python source edits are available without reinstalling. Rerun installation after changing project metadata or dependencies. The `[dev]` extra installs Ruff, pytest, dbt Core and dbt-postgres; application dependencies include httpx for HTTP, Pandas for processing, PyArrow for Parquet, and Psycopg 3 for PostgreSQL. `pyproject.toml` is the configuration source for packaging and these tools.
 
 Run `deactivate` when finished if you activated the environment. Virtual environments, package metadata, and tool caches are ignored by Git. `.env.example` contains an empty OpenAQ key placeholder and an example PostgreSQL URL. Automated tests require no real credentials; live acquisition reads `OPENAQ_API_KEY` from the process environment and does not automatically load `.env` files.
 
@@ -187,15 +187,63 @@ python scripts/load_postgres_warehouse.py
 python scripts/load_postgres_warehouse.py --input-dir <enriched-parquet-directory>
 ```
 
-The default input is `data/curated/open_meteo_air_quality/air_quality_weather/`. This is a **full refresh** of `airatlas.locations` and `airatlas.observations`, including rows from earlier loads that are absent in the new snapshot. It leaves unrelated tables alone and preserves files in all data layers. It creates missing AirAtlas structures, loads locations before observations, validates counts and constraints, and commits once. A failure rolls back. Repeat loads do not accumulate observations; incompatible existing schema definitions require explicit investigation, not automatic migrations.
+The default input is `data/curated/open_meteo_air_quality/air_quality_weather/`. This is a **full refresh** of `airatlas.locations` and `airatlas.observations`, including rows from earlier loads that are absent in the new snapshot. It leaves unrelated tables alone and preserves files in all data layers. It creates missing AirAtlas structures, loads locations before observations, validates counts and constraints, and commits once. A failure rolls back. Repeat loads do not accumulate observations; the loader applies a narrow compatibility repair for the old non-null weather-hour constraint. Other incompatible schema definitions require explicit investigation, not automatic migrations.
 
-Empty input, missing required columns, duplicate observation keys, conflicting non-null location metadata, and timestamps finer than PostgreSQL's microsecond precision fail clearly before connecting. Missing weather and optional source fields remain SQL nulls. The summary reports loaded locations/observations, pollutant counts, weather coverage, and earliest/latest boundaries.
+Empty input, missing required columns, duplicate observation keys, conflicting non-null location metadata, and timestamps finer than PostgreSQL's microsecond precision fail clearly before connecting. Missing weather and optional source fields remain SQL nulls. An unmatched row may have a null weather hour or retain the aligned join hour. Matched weather requires `open_meteo` and a valid aligned hour; individual weather values may be null. Values without a weather source are rejected. The summary reports loaded locations/observations, pollutant counts, weather coverage, and earliest/latest boundaries.
 
 Open [sql/example_queries.sql](../sql/example_queries.sql) in your PostgreSQL SQL client, or run `\i sql/example_queries.sql` from a connected `psql` session started at the repository root. The examples show latest observations, location averages, weather comparisons, and daily trends without combining different source units.
 
 Automated tests use fake connections and do not prove a live database deployment. When `AIRATLAS_DATABASE_URL` points to a suitable development database, an optional smoke test can load a small enriched fixture twice and inspect counts and example queries. Remember that each run replaces the two AirAtlas tables; use a development database for fixtures.
 
-**M4 outcome:** AirAtlas can enrich curated PM2.5 and PM10 observations with historical weather context and publish them into a queryable PostgreSQL warehouse. M4 is complete. dbt, scheduling, APIs, and dashboards remain future work.
+**M4 outcome:** AirAtlas can enrich curated PM2.5 and PM10 observations with historical weather context and publish them into a queryable PostgreSQL warehouse. M4 is complete and its production loader has now been validated on local PostgreSQL 17 during M5, including repeat loading without duplicate accumulation. Scheduling, APIs, and dashboards remain future work.
+
+## M5 dbt workflow
+
+Activate the development environment and install `.[dev]` as above. dbt starts after the Python warehouse loader: first load the enriched Parquet snapshot using `AIRATLAS_DATABASE_URL`. dbt does not ingest files or replace the loader.
+
+The committed `dbt/profiles.yml` reads separate connection components from the process environment. Point these at the same database as the loader. The loader's `AIRATLAS_DATABASE_URL` remains unchanged; dbt does not derive its settings from that URL or automatically read a private `.env` file.
+
+| Variable | Meaning / default |
+| --- | --- |
+| `AIRATLAS_DB_HOST` | PostgreSQL host; default `localhost`. |
+| `AIRATLAS_DB_PORT` | PostgreSQL port; default `5432`. |
+| `AIRATLAS_DB_NAME` | Database; default `airatlas`. |
+| `AIRATLAS_DB_USER` | Your database role; configure for live execution. |
+| `AIRATLAS_DB_PASSWORD` | Role password; configure securely for live execution. |
+| `AIRATLAS_DBT_SCHEMA` | Target prefix; default `airatlas_analytics`. |
+
+PowerShell example (placeholders only; configure the real password securely in your local process environment):
+
+```powershell
+$env:AIRATLAS_DB_HOST = "localhost"
+$env:AIRATLAS_DB_PORT = "5432"
+$env:AIRATLAS_DB_NAME = "airatlas"
+$env:AIRATLAS_DB_USER = "<database-role>"
+$env:AIRATLAS_DB_PASSWORD = "<database-password>"
+$env:AIRATLAS_DBT_SCHEMA = "airatlas_analytics"
+```
+
+On Linux/macOS, use `export VARIABLE="value"` for the same settings. Keep real credentials out of committed files, shared logs and saved shell history. The dbt role needs read access to `airatlas.locations` and `airatlas.observations`, plus permission to create/use its analytics schemas and rebuild its own models. Default model schemas end in `_staging`, `_intermediate` and `_marts`; dbt leaves source tables owned by the Python loader.
+
+Run from the repository root:
+
+```bash
+dbt parse --project-dir dbt --profiles-dir dbt
+dbt debug --project-dir dbt --profiles-dir dbt
+dbt build --project-dir dbt --profiles-dir dbt
+dbt docs generate --project-dir dbt --profiles-dir dbt
+```
+
+- **parse** validates project structure, configuration and model references without proving database execution. CI uses harmless connection placeholders for this step.
+- **debug** checks configuration and the real PostgreSQL connection.
+- **build** executes the staging/intermediate views, mart tables and data tests in dependency order. It requires a loaded source warehouse and replaces the derived marts; no incremental model state is used.
+- **docs generate** queries database metadata and creates documentation/catalog artifacts. It does not host a documentation website.
+
+The four marts and their grains are described in the [architecture guide](architecture.md#dbt-analytics). Use the mart examples in [sql/example_queries.sql](../sql/example_queries.sql) after building; adjust their schema prefix if you use a custom target. Preserve original source units, including Unicode units: replacement characters in a Windows terminal indicate a console-encoding problem and should not be written back into data.
+
+`dbt/target/`, `dbt/logs/` and `dbt/dbt_packages/` are Git-ignored. Do not commit generated catalogs, raw/processed/curated datasets, temporary fixtures, database dumps or credentials.
+
+**M5 validation and outcome:** The developer verified local PostgreSQL 17 using the production loader and a deterministic fixture: 2 locations, 6 observations, 5 weather matches and 1 unmatched row. A repeat refresh still contained 6 observations. `dbt debug`, `dbt build`, representative mart queries and `dbt docs generate` succeeded. The final build has **7 models, 2 sources and 89 data tests**, with **96 passes and no warnings, errors or skips**. The 89 tests intentionally allow nullable unmatched weather hours. These user-verified database results are separate from automated offline Python tests and CI parsing. M5 is complete; AirAtlas now publishes tested observation, daily, location and weather-context analytical models. No production/cloud deployment is implied.
 
 ## Continuous integration
 
@@ -205,6 +253,7 @@ The workflow in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) automa
 2. Check Ruff linting.
 3. Validate Ruff formatting without changing files.
 4. Run pytest using automatic discovery.
+5. Parse dbt with harmless placeholders, without requiring PostgreSQL.
 
 A failed installation or check fails the job. CI uses read-only repository permissions, requires no custom secrets, and performs no deployment. Review hosted results in the repository's Actions tab; local checks alone do not confirm a hosted run.
 
