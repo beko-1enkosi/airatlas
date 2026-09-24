@@ -371,6 +371,28 @@ def test_dsn_forwarded_and_repeated_refresh(tmp_path, records, database, monkeyp
     assert database.statements.count("DELETE FROM airatlas.observations") == 2
 
 
+def test_refresh_preserves_pipeline_audit_history(tmp_path, records, database):
+    database.pipeline_runs = {"existing_run": {"status": "succeeded"}}
+    history = copy.deepcopy(database.pipeline_runs)
+    path = parquet_input(tmp_path, records)
+    load_postgres_warehouse(path)
+    load_postgres_warehouse(path)
+    assert database.pipeline_runs == history
+    deletes = {sql for sql in database.statements if sql.startswith("DELETE")}
+    assert deletes == {
+        "DELETE FROM airatlas.observations",
+        "DELETE FROM airatlas.locations",
+    }
+    assert not any(
+        "TRUNCATE" in sql
+        or "DROP TABLE" in sql
+        or "DROP SCHEMA" in sql
+        or "CASCADE" in sql
+        or "pipeline_runs" in sql
+        for sql in database.statements
+    )
+
+
 @pytest.mark.parametrize(
     "failure",
     ["insert", "commit", "count", "locations", "duplicates", "pollutants", "orphans"],

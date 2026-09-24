@@ -10,12 +10,27 @@ from datetime import UTC, datetime, timedelta
 from airflow.sdk import DAG, Param, get_current_context, task
 from airflow.timetables.interval import CronDataIntervalTimetable
 
+
+def audit_success(context):
+    from airatlas.orchestration.audit import dag_succeeded
+
+    dag_succeeded(context)
+
+
+def audit_failure(context):
+    from airatlas.orchestration.audit import dag_failed
+
+    dag_failed(context)
+
+
 with DAG(
     dag_id="airatlas_pipeline",
     schedule=CronDataIntervalTimetable("0 0 * * *", timezone="UTC"),
     start_date=datetime(2026, 1, 1, tzinfo=UTC),
     catchup=False,
     max_active_runs=1,
+    on_success_callback=audit_success,
+    on_failure_callback=audit_failure,
     default_args={"retries": 1, "retry_delay": timedelta(minutes=5)},
     params={
         "run_mode": Param("incremental", enum=["historical", "incremental"]),
@@ -54,21 +69,26 @@ with DAG(
 
     @task(retries=0, multiple_outputs=False)
     def validate_run_config():
+        from airatlas.orchestration.audit import start_run
         from airatlas.orchestration.commands import validate_run_config as validate
 
         context = get_current_context()
-        return validate(
+        validated = validate(
             context["params"],
             context.get("data_interval_start"),
             context.get("data_interval_end"),
             manual=context["dag_run"].run_type == "manual",
         )
+        run = context["dag_run"]
+        start_run(run.dag_id, run.run_id, validated)
+        return validated
 
     @task(do_xcom_push=False)
     def execute_stage(stage, config):
-        from airatlas.orchestration.commands import run_stage
+        from airatlas.orchestration.commands import run_audited_stage
 
-        run_stage(stage, config)
+        run = get_current_context()["dag_run"]
+        run_audited_stage(stage, config, run.dag_id, run.run_id)
 
     config = validate_run_config()
     acquire = execute_stage.override(task_id="acquire_air_quality")(

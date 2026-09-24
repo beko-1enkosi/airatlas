@@ -1,5 +1,6 @@
 """Coordinate production CLIs without importing Airflow or moving dataset payloads."""
 
+import json
 import os
 import subprocess
 import sys
@@ -137,4 +138,32 @@ def build_command(stage, config):
 def run_stage(stage, config):
     # Environment is inherited, never serialized into Params, argv or XCom.
     # CLI summaries stream to task logs; datasets remain in files/PostgreSQL.
+    if stage == "load_postgres_warehouse":
+        result = subprocess.run(
+            build_command(stage, config),
+            cwd=project_root(),
+            check=True,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            count = json.loads(result.stdout)["observations_loaded"]
+            if type(count) is not int or not 0 <= count <= 2**63 - 1:
+                raise ValueError
+        except (ValueError, KeyError, TypeError):
+            raise ValueError(
+                "Warehouse returned an invalid observation-count summary."
+            ) from None
+        return {"observations_loaded": count}
     subprocess.run(build_command(stage, config), cwd=project_root(), check=True)
+
+
+def run_audited_stage(stage, config, dag_id, run_id):
+    from airatlas.orchestration import audit
+
+    audit.update_stage(dag_id, run_id, stage)
+    # No exception handler: original pipeline failures reach Airflow unchanged.
+    # Final failure is recorded by the DAG callback, after retries are exhausted.
+    result = run_stage(stage, config)
+    if stage == "load_postgres_warehouse":
+        audit.store_observation_count(dag_id, run_id, result["observations_loaded"])
