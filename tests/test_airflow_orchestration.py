@@ -246,3 +246,91 @@ def test_airflow_is_isolated_and_generated_files_ignored():
         text=True,
     )
     assert set(result.stdout.splitlines()) == set(ignored)
+
+
+def test_dag_audit_lifecycle_and_seven_tasks():
+    text = (ROOT / "airflow/dags/airatlas_pipeline.py").read_text()
+    assert "on_success_callback=audit_success" in text
+    assert "on_failure_callback=audit_failure" in text
+    assert "start_run(run.dag_id, run.run_id, validated)" in text
+    assert "run_audited_stage(stage, config, run.dag_id, run.run_id)" in text
+    assert text.count("execute_stage.override(task_id=") == 6
+
+
+def test_warehouse_summary_capture(monkeypatch):
+    from types import SimpleNamespace
+
+    calls = []
+
+    def execute(argv, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            stdout='{"observations_loaded": 6, "other": "not retained"}'
+        )
+
+    monkeypatch.setattr(commands.subprocess, "run", execute)
+    assert commands.run_stage("load_postgres_warehouse", {}) == {
+        "observations_loaded": 6
+    }
+    assert calls == [
+        {"cwd": ROOT.resolve(), "check": True, "stdout": subprocess.PIPE, "text": True}
+    ]
+
+
+@pytest.mark.parametrize(
+    "output",
+    ["not JSON", "{}", '{"observations_loaded": true}', '{"observations_loaded": -1}'],
+)
+def test_invalid_warehouse_summary_fails_without_dumping_output(monkeypatch, output):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        commands.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=output)
+    )
+    with pytest.raises(ValueError, match="invalid observation-count summary"):
+        commands.run_stage("load_postgres_warehouse", {})
+
+
+def test_audited_stage_tracks_count_without_xcom(monkeypatch):
+    from airatlas.orchestration import audit
+
+    events = []
+    monkeypatch.setattr(audit, "update_stage", lambda *a: events.append(("stage", a)))
+    monkeypatch.setattr(commands, "run_stage", lambda *a: {"observations_loaded": 6})
+    monkeypatch.setattr(
+        audit, "store_observation_count", lambda *a: events.append(("count", a))
+    )
+    assert (
+        commands.run_audited_stage("load_postgres_warehouse", {}, "dag", "run") is None
+    )
+    assert events == [
+        ("stage", ("dag", "run", "load_postgres_warehouse")),
+        ("count", ("dag", "run", 6)),
+    ]
+
+
+def test_original_stage_failure_is_not_swallowed(monkeypatch):
+    from airatlas.orchestration import audit
+
+    monkeypatch.setattr(audit, "update_stage", lambda *a: None)
+    original = subprocess.CalledProcessError(1, ["script"])
+
+    def fail(*args):
+        raise original
+
+    monkeypatch.setattr(commands, "run_stage", fail)
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        commands.run_audited_stage("process_air_quality", {}, "dag", "run")
+    assert error.value is original
+
+
+def test_audit_write_failure_blocks_stage(monkeypatch):
+    from airatlas.orchestration import audit
+
+    def fail(*args):
+        raise audit.AuditError("Audit unavailable")
+
+    monkeypatch.setattr(audit, "update_stage", fail)
+    monkeypatch.setattr(commands, "run_stage", lambda *a: pytest.fail("Must not run"))
+    with pytest.raises(audit.AuditError):
+        commands.run_audited_stage("process_air_quality", {}, "dag", "run")
