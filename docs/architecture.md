@@ -2,7 +2,7 @@
 
 ## Purpose and status
 
-AirAtlas is a Data Engineering portfolio project for collecting, processing, storing, and eventually serving public environmental data. **M1 - Foundation**, **M2 - Data Acquisition**, **M3 - Processing & Quality**, **M4 - Weather & Warehouse**, and **M5 - Analytics with dbt** are complete. Orchestration and serving remain planned.
+AirAtlas is a Data Engineering portfolio project for collecting, processing, storing, and eventually serving public environmental data. **M1 - Foundation**, **M2 - Data Acquisition**, **M3 - Processing & Quality**, **M4 - Weather & Warehouse**, **M5 - Analytics with dbt**, and **M6 - Orchestration** are complete. M7 serving and dashboard work remain planned.
 
 ## Implemented flow
 
@@ -50,7 +50,7 @@ Files are written to a temporary file in the destination directory, flushed, and
 
 The caller supplies a timezone-aware checkpoint and later upper boundary. They are normalized to UTC. The next candidate equals the requested upper boundary, including for complete empty windows. Required sensor discovery and measurement retrieval must be complete, and both required pollutants must be present.
 
-Unsafe incremental runs are refused by persistence. A persistence error prevents the CLI from reporting successful persistence. A safe candidate applies only to the queried location set, especially when `--location-id` is used. Checkpoint state is not saved; a future state/orchestration layer must commit it only after successful persistence. Source identifiers and timestamps support deduplication of repeated boundary observations in the processed layer.
+Unsafe incremental runs are refused by persistence. A persistence error prevents the CLI from reporting successful persistence. A safe candidate applies only to the queried location set, especially when `--location-id` is used. Durable ingestion checkpoint state is not saved. Airflow selects scheduled windows from its data intervals rather than persisting an ingestion watermark. Source identifiers and timestamps support deduplication of repeated boundary observations in the processed layer.
 
 ## Processing and quality
 
@@ -139,6 +139,36 @@ For M5 completion, the developer verified the production loader and dbt against 
 - Representative queries returned 6 fact rows, 5 daily rows, 4 location rows and 4 weather-context rows. Jabavu-NAQI PM2.5 on September 1 had 2 observations averaging 12.7; Table View-NAQI PM2.5 averaged 8.7 across 2 observations. Pollutant and unit remained visible in each aggregate.
 - `dbt docs generate` produced the catalog successfully. Generated files under `dbt/target/` remain ignored.
 
+## Airflow orchestration and run auditing
+
+**M6 — Orchestration: complete.** Airflow coordinates OpenAQ -> raw storage -> processing -> curated Parquet -> Open-Meteo enrichment -> PostgreSQL -> dbt marts. It invokes existing production scripts and `dbt build` rather than duplicating their business logic.
+
+The Airflow 3 SDK DAG `airatlas_pipeline` has seven serial tasks:
+
+```text
+validate_run_config
+  -> acquire_air_quality
+  -> process_air_quality
+  -> build_curated_air_quality
+  -> enrich_air_quality_weather
+  -> load_postgres_warehouse
+  -> build_dbt_analytics
+```
+
+The daily midnight UTC schedule uses Airflow data intervals for incremental boundaries. Manual incremental runs supply timezone-aware `checkpoint` and `datetime_to`; historical runs supply dates with `date_to > date_from`. An optional approved location filters acquisition only. `catchup=False` prevents an automatic backlog; `max_active_runs=1` prevents overlapping DAG snapshot rebuilds. Independent CLI rebuilds must also be kept separate from DAG execution.
+
+Stages have one retry after five minutes, in addition to existing HTTP-client retries. Configuration validation has no retries. Upstream-success dependencies and subprocess exit checks block downstream work on failure. `AIRATLAS_PROJECT_ROOT` selects the repository; argument-list subprocesses use runtime Python/dbt and inherit environment-based credentials. Only small validated configuration metadata enters XCom; files and PostgreSQL carry datasets.
+
+The orchestration layer owns `airatlas.pipeline_runs`, separate from the warehouse loader's `locations`/`observations` and dbt models. Its primary key `(dag_id, run_id)` uses Airflow's run identity. Valid configuration initializes one row; retries update it instead of adding history. Invalid configuration has no validated window and does not initialize an audit row.
+
+Each row stores run mode, requested start/end in UTC, optional location ID (NULL when omitted), `running`/`succeeded`/`failed` status, current/failed stage, start/finish timestamps, and an observation count when available from the warehouse CLI summary. Historical dates represent midnight UTC; incremental windows preserve the validated boundaries. Stage entry updates the current stage. DAG success/failure callbacks set terminal status and finish time; failure records the relevant failed task or last recorded stage and a fixed safe summary bounded by a 160-character column. Secrets, command output and tracebacks are not stored.
+
+Audit writes reuse `AIRATLAS_DATABASE_URL`. Idempotent creation and the warehouse loader's narrowly scoped refresh preserve audit history. Detailed task attempts, retry history and logs remain Airflow's responsibility. Callbacks write separately from Airflow state changes: inspect both DAG state and the audit row, and check Airflow callback logs if auditing fails.
+
+### Local Airflow validation
+
+The developer verified **Airflow 3.3.2 in WSL2**: DAG import validation passed with no import errors, the DAG was discovered, and all seven tasks were listed. The complete pipeline then executed successfully end to end, reaching PostgreSQL and dbt through the orchestrated workflow, with pipeline auditing validated. This user-verified local run passed the M6 completion gate. Airflow metadata remains separate from the analytical warehouse; no production infrastructure deployment is implied.
+
 ## Data layers and future architecture
 
 | Layer | Implemented purpose |
@@ -146,12 +176,13 @@ For M5 completion, the developer verified the production loader and dbt against 
 | `data/raw/` | Immutable OpenAQ JSON and cache-first Open-Meteo JSON source evidence, with request provenance. |
 | `data/processed/` | Rebuildable validated, normalized, deduplicated CSV observations and a quality report. |
 | `data/curated/` | Rebuildable air-quality and weather-enriched Parquet datasets, plus manifests. |
-| PostgreSQL `airatlas` | Queryable relational analytical storage rebuilt transactionally from enriched Parquet. |
+| PostgreSQL `airatlas.locations` / `airatlas.observations` | Analytical snapshot rebuilt transactionally from enriched Parquet. |
+| PostgreSQL `airatlas.pipeline_runs` | Persistent orchestration-owned run summaries, preserved during warehouse refreshes. |
 | dbt analytics schemas | Tested staging/intermediate views and observation, daily, location and weather-context mart tables. |
 
 All generated filesystem layers are Git-ignored. Processing and curation do not alter their inputs.
 
-Planned flow: dbt analytics marts -> API/dashboard. Apache Airflow will orchestrate stages. The dashboard is an output layer; its technology has not been selected. Airflow DAGs, API endpoints, and dashboard functionality do not exist yet.
+Planned M7 flow: dbt analytics marts -> API/dashboard. The dashboard is an output layer; its technology has not been selected. API endpoints and dashboard functionality do not exist yet.
 
 ## Foundation tooling
 

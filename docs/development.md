@@ -119,7 +119,7 @@ Incremental persistence refuses unsafe runs, including missing required sensors 
 
 ## M2 outcome
 
-AirAtlas now retrieves configured South African OpenAQ PM2.5/PM10 measurements with pagination and bounded retries, and preserves complete source batches as deterministic raw JSON. M3 extends these raw batches into processed and curated observations. M4 adds weather enrichment and PostgreSQL storage; orchestration and serving remain future work.
+AirAtlas now retrieves configured South African OpenAQ PM2.5/PM10 measurements with pagination and bounded retries, and preserves complete source batches as deterministic raw JSON. M3 extends these raw batches into processed and curated observations. M4 adds weather enrichment and PostgreSQL storage; M6 orchestrates these stages; serving remains future work.
 
 ## M3 processing and curation workflow
 
@@ -147,7 +147,7 @@ Raw data stays unchanged. Processed CSV, quality reports, curated Parquet, and m
 
 No raw files causes a clear processing input error. Complete empty raw batches may produce a zero-row CSV; curation rejects empty input and preserves any previous snapshot. Check command success and the manifest before using an existing dataset after a failed rebuild.
 
-**M3 outcome:** AirAtlas transforms immutable OpenAQ batches into validated, deduplicated observations, reports quality outcomes, and publishes an analysis-ready partitioned Parquet dataset. M3 is complete; M4 adds weather and warehouse capabilities below. Orchestration, APIs, and dashboards remain planned.
+**M3 outcome:** AirAtlas transforms immutable OpenAQ batches into validated, deduplicated observations, reports quality outcomes, and publishes an analysis-ready partitioned Parquet dataset. M3 is complete; M4 adds weather and warehouse capabilities below. M6 orchestrates these stages; APIs and dashboards remain planned.
 
 ## M4 weather and warehouse workflow
 
@@ -195,7 +195,7 @@ Open [sql/example_queries.sql](../sql/example_queries.sql) in your PostgreSQL SQ
 
 Automated tests use fake connections and do not prove a live database deployment. When `AIRATLAS_DATABASE_URL` points to a suitable development database, an optional smoke test can load a small enriched fixture twice and inspect counts and example queries. Remember that each run replaces the two AirAtlas tables; use a development database for fixtures.
 
-**M4 outcome:** AirAtlas can enrich curated PM2.5 and PM10 observations with historical weather context and publish them into a queryable PostgreSQL warehouse. M4 is complete and its production loader has now been validated on local PostgreSQL 17 during M5, including repeat loading without duplicate accumulation. Scheduling, APIs, and dashboards remain future work.
+**M4 outcome:** AirAtlas can enrich curated PM2.5 and PM10 observations with historical weather context and publish them into a queryable PostgreSQL warehouse. M4 is complete and its production loader has now been validated on local PostgreSQL 17 during M5, including repeat loading without duplicate accumulation. M6 adds scheduling and run auditing; APIs and dashboards remain future work.
 
 ## M5 dbt workflow
 
@@ -244,6 +244,62 @@ The four marts and their grains are described in the [architecture guide](archit
 `dbt/target/`, `dbt/logs/` and `dbt/dbt_packages/` are Git-ignored. Do not commit generated catalogs, raw/processed/curated datasets, temporary fixtures, database dumps or credentials.
 
 **M5 validation and outcome:** The developer verified local PostgreSQL 17 using the production loader and a deterministic fixture: 2 locations, 6 observations, 5 weather matches and 1 unmatched row. A repeat refresh still contained 6 observations. `dbt debug`, `dbt build`, representative mart queries and `dbt docs generate` succeeded. The final build has **7 models, 2 sources and 89 data tests**, with **96 passes and no warnings, errors or skips**. The 89 tests intentionally allow nullable unmatched weather hours. These user-verified database results are separate from automated offline Python tests and CI parsing. M5 is complete; AirAtlas now publishes tested observation, daily, location and weather-context analytical models. No production/cloud deployment is implied.
+
+## M6 Airflow workflow
+
+**M6 — Orchestration: complete.** Use the separate WSL2/Linux environment validated with **Airflow 3.3.2**. Runtime requirements live in `airflow/requirements.txt`; AirAtlas and its `.[dev]` tools must also be installed in that environment. Do not install Airflow into the normal Windows `.venv`. Keep Airflow's metadata database separate from the AirAtlas PostgreSQL warehouse.
+
+Set the repository root and DAG folder in the Airflow runtime environment (replace the path):
+
+```bash
+export AIRATLAS_PROJECT_ROOT="/absolute/path/to/airatlas"
+export AIRFLOW__CORE__DAGS_FOLDER="$AIRATLAS_PROJECT_ROOT/airflow/dags"
+```
+
+Supply the existing `OPENAQ_API_KEY`, `AIRATLAS_DATABASE_URL` and dbt connection variables securely to task workers and callback processes. The database role also needs permission to create and update `airatlas.pipeline_runs`. Do not put credentials in DAG Params, command arguments or committed files. Workers must share repository/data paths. Existing scripts run with argument lists, the runtime Python executable and the configured repository as working directory; the last stage runs `dbt build`.
+
+Check discovery in the active WSL2 Airflow environment:
+
+```bash
+airflow dags list-import-errors
+airflow dags list
+airflow tasks list airatlas_pipeline
+```
+
+Trigger `airatlas_pipeline` in the Airflow UI with a small historical window and one approved location. Example Params:
+
+```json
+{
+  "run_mode": "historical",
+  "date_from": "2026-09-01",
+  "date_to": "2026-09-02",
+  "location_id": 225448
+}
+```
+
+These dates illustrate the format, not guaranteed source coverage. This executes real acquisition and rebuilds derived files, the warehouse snapshot and dbt marts. The location filter limits acquisition only; downstream stages process all available raw batches. Do not run independent CLI rebuilds concurrently.
+
+Historical dates require a strictly later end. Manual incremental runs use `run_mode=incremental` with both `checkpoint` and `datetime_to` as increasing timezone-aware timestamps. Scheduled runs default to incremental mode using Airflow's UTC data interval. The schedule is daily at midnight UTC with `catchup=False` and `max_active_runs=1`; it does not automatically launch historical recovery runs or persist an ingestion checkpoint.
+
+The seven tasks run in order: configuration validation, acquisition, processing, curation, weather enrichment, warehouse loading and dbt build. Each production stage has one retry after five minutes; validation has none. Upstream failures block downstream tasks. Only small configuration metadata passes through XCom; datasets stay in the existing file/database layers.
+
+Valid configuration initializes one `airatlas.pipeline_runs` row for the DAG/run identity. Stages update that row, the warehouse summary supplies an observation count when available, and DAG callbacks record success/failure and finish time. Inspect recent summaries in a connected PostgreSQL SQL client:
+
+```sql
+SELECT run_id, run_mode, requested_start, requested_end, location_id,
+       status, current_stage, failed_stage, started_at, finished_at,
+       observations_loaded, error_summary
+FROM airatlas.pipeline_runs
+WHERE dag_id = 'airatlas_pipeline'
+ORDER BY started_at DESC
+LIMIT 10;
+```
+
+Confirm the completed run has `status = 'succeeded'` and a finish timestamp. Audit history survives warehouse refreshes. Failed runs receive a bounded fixed safe summary, not exception text or secrets. Detailed task history and logs remain in Airflow. Check callback logs if the audit outcome does not match DAG state; callback writes are separate from Airflow state changes. Invalid configuration does not initialize an audit row.
+
+**User-verified validation:** Airflow 3.3.2 in WSL2 passed DAG import checks, discovered the DAG and all seven tasks, and executed the complete pipeline successfully through PostgreSQL and dbt. Pipeline auditing was also validated. This is local end-to-end evidence for M6 completion, separate from offline tests and CI checks.
+
+Generated datasets, dbt artifacts and local Airflow configuration/database/log files remain Git-ignored. Offline orchestration/audit tests do not need Airflow or a live database. M7 API and dashboard functionality remain future work.
 
 ## Continuous integration
 

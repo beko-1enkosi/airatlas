@@ -16,6 +16,8 @@ Air-quality and weather observations come from separate sources and can vary in 
 
 ## Implemented pipeline
 
+Airflow 3 orchestrates the existing scripts and dbt build; `airatlas.pipeline_runs` provides lightweight persistent run auditing.
+
 ```text
 OpenAQ API v3
   -> South African location discovery
@@ -43,17 +45,18 @@ The approved stations are in [config/mvp_locations.json](config/mvp_locations.js
 ```text
 dbt analytics marts
   -> FastAPI / dashboard serving layer
-
-Apache Airflow will orchestrate pipeline stages.
 ```
 
-Orchestration and serving remain planned. See the [architecture document](docs/architecture.md) for current and future responsibilities.
+M7 serving and dashboard work remain planned. See the [architecture document](docs/architecture.md) for current and future responsibilities.
 
 ## Repository structure
 
 ```text
 AirAtlas/
 |-- .github/workflows/ci.yml
+|-- airflow/
+|   |-- dags/airatlas_pipeline.py
+|   `-- requirements.txt
 |-- config/mvp_locations.json
 |-- data/
 |   |-- raw/.gitkeep
@@ -86,7 +89,8 @@ AirAtlas/
 |   |-- processing/
 |   |-- curation/
 |   |-- weather/
-|   `-- warehouse/
+|   |-- warehouse/
+|   `-- orchestration/
 |-- tests/
 |-- .env.example
 |-- .gitignore
@@ -94,7 +98,7 @@ AirAtlas/
 `-- README.md
 ```
 
-`ingestion/` retrieves OpenAQ data; `storage/` preserves raw batches; `processing/` validates and deduplicates observations; `curation/` publishes Parquet; `weather/` retrieves and joins hourly weather; `warehouse/` loads PostgreSQL. `dbt/` contains source declarations, analytical models and SQL tests; `sql/` provides warehouse and mart query examples. `scripts/` provides terminal entry points, and `tests/` covers the pipeline offline using temporary datasets. Generated data and local credentials are ignored by Git; the tree shows tracked placeholders, not generated datasets.
+`ingestion/` retrieves OpenAQ data; `storage/` preserves raw batches; `processing/` validates and deduplicates observations; `curation/` publishes Parquet; `weather/` retrieves and joins hourly weather; `warehouse/` loads PostgreSQL. `dbt/` contains source declarations, analytical models and SQL tests; `sql/` provides warehouse and mart query examples. `airflow/` contains the DAG and isolated runtime requirements; `orchestration/` coordinates commands and run audits. `scripts/` provides terminal entry points, and `tests/` covers the pipeline offline using temporary datasets. Generated data and local credentials are ignored by Git; the tree shows tracked placeholders, not generated datasets.
 
 ## Current status and milestones
 
@@ -107,6 +111,8 @@ AirAtlas/
 **M4 — Weather & Warehouse: complete**
 
 **M5 — Analytics with dbt: complete**
+
+**M6 — Orchestration: complete**
 
 M1 provides Python packaging, a development environment, Ruff, pytest, GitHub Actions CI, and documentation. M2 adds OpenAQ API v3 integration, South African location discovery, six approved MVP stations, PM2.5/PM10 historical backfill and incremental retrieval, automatic pagination, bounded retries, rate-limit handling, and deterministic raw JSON persistence.
 
@@ -122,6 +128,10 @@ The M5 completion gate was verified by the developer against **local PostgreSQL 
 
 AirAtlas can now transform its PostgreSQL warehouse into tested, documented analytical dbt models for observation-level, daily, location-level and weather-context analysis.
 
+M6 adds the `airatlas_pipeline` DAG, scheduled daily at midnight UTC with historical and incremental modes, `catchup=False`, and `max_active_runs=1`. Stages reuse existing production scripts, inherit environment-based secrets, and have one retry after five minutes; configuration validation has no retries. Upstream failures block downstream work. One audit row per DAG run records its requested window, optional location, status, stages, timestamps, available observation count and bounded safe error summary. Detailed task history and logs remain Airflow's responsibility.
+
+The developer verified **Airflow 3.3.2 in WSL2**: DAG import validation passed, all seven tasks were discovered, and the complete pipeline executed successfully through acquisition, processing, curation, weather enrichment, PostgreSQL loading and dbt build. Pipeline auditing was also validated. This is user-verified local execution, not a production deployment.
+
 ## Development
 
 Use **Python 3.12**. Follow the [development guide](docs/development.md) to clone the repository, create and activate a virtual environment, and understand the Git workflow. From the repository root with that environment active:
@@ -132,6 +142,8 @@ python -m pip install -e ".[dev]"
 ```
 
 The editable installation uses the source in `src/airatlas`; `[dev]` adds Ruff, pytest, dbt Core and the PostgreSQL adapter. The [development guide](docs/development.md#m5-dbt-workflow) covers database configuration and dbt commands.
+
+Airflow runs in a separate WSL2/Linux environment, not the Windows project `.venv`. See the [M6 workflow](docs/development.md#m6-airflow-workflow).
 
 ## Quality commands
 
@@ -150,7 +162,7 @@ GitHub Actions runs installation and these checks on pushes and pull requests us
 3. **Processing & Quality (M3) - complete:** normalized observations, validation, quality reporting, deduplication, conflict detection, processed CSV, and partitioned Parquet.
 4. **Weather & Warehouse (M4) - complete:** historical weather enrichment and transactional PostgreSQL snapshot loading, validated locally on PostgreSQL 17.
 5. **Analytics with dbt (M5) - complete:** sources, staging/intermediate views, four analytics marts, tests, generated dbt documentation, and real local PostgreSQL validation.
-6. **Orchestration and quality (planned):** schedule workflows with Airflow and expand automated checks.
-7. **Serving and presentation (planned):** expose curated data through an API and dashboard, and document the completed platform.
+6. **Orchestration (M6) - complete:** daily/manual Airflow execution, stage retries and PostgreSQL run auditing, validated end to end in WSL2.
+7. **Serving and presentation (M7, planned):** expose curated data through an API and dashboard, and document the completed platform.
 
-Orchestration, APIs, and dashboards remain planned; no M6/later functionality is implemented.
+APIs and dashboards remain future M7 work; no serving layer is implemented.
