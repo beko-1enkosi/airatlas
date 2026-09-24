@@ -1,0 +1,6 @@
+# WSL2/Linux only, in a separate Python 3.12 environment; never the Windows .venv.
+# Install with the matching official Airflow constraints for that environment:
+# https://raw.githubusercontent.com/apache/airflow/constraints-3.3.2/constraints-3.12.txt
+# Also install AirAtlas .[dev] in that Linux environment for the CLIs and dbt.
+# Keep AIRFLOW_HOME/metadata separate from the AirAtlas analytical database.
+apache-airflow==3.3.2

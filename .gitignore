@@ -71,3 +71,13 @@ dist/
 /dbt/logs/
 /dbt/dbt_packages/
 /dbt/.user.yml
+
+# Repository-local Airflow runtime state; DAGs and requirements remain tracked.
+/airflow/logs/
+/airflow/airflow.cfg
+/airflow/airflow.db*
+/airflow/webserver_config.py
+/airflow/standalone_admin_password.txt
+/airflow/simple_auth_manager_passwords.json*
+/airflow/airflow-webserver.pid
+/airflow/airflow-scheduler.pid
