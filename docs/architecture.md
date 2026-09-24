@@ -2,7 +2,7 @@
 
 ## Purpose and status
 
-AirAtlas is a Data Engineering portfolio project for collecting, processing, storing, and eventually serving public environmental data. **M1 - Foundation**, **M2 - Data Acquisition**, **M3 - Processing & Quality**, and **M4 - Weather & Warehouse** are complete. dbt modeling, orchestration, and serving remain planned.
+AirAtlas is a Data Engineering portfolio project for collecting, processing, storing, and eventually serving public environmental data. **M1 - Foundation**, **M2 - Data Acquisition**, **M3 - Processing & Quality**, **M4 - Weather & Warehouse**, and **M5 - Analytics with dbt** are complete. Orchestration and serving remain planned.
 
 ## Implemented flow
 
@@ -19,7 +19,9 @@ OpenAQ API v3
   -> Curated partitioned Parquet under data/curated/
        + Open-Meteo historical hours -> raw weather cache
   -> Weather-enriched Parquet
-  -> PostgreSQL airatlas schema
+  -> PostgreSQL airatlas schema (Python-owned source warehouse)
+  -> dbt sources -> staging views -> intermediate view
+  -> Analytics mart tables
 ```
 
 Python and httpx implement the HTTP boundary. Location IDs resolve to sensor IDs because measurements are sensor-based. Original measurement objects are retained without an analytics schema conversion. Discovery remains terminal-only; the backfill and incremental scripts persist measurement batches.
@@ -88,7 +90,7 @@ Each represented location requests only the inclusive date span needed by its me
 
 Weather timestamps are UTC-aware. Air-quality period end is floored to the UTC hour and left-joined with weather on `(location_id, weather_hour_utc)`, never nearest-neighbour matching. Unmatched air-quality rows remain present. Missing weather values stay null; all-null weather hours count as unavailable, while partially populated hours count as matched. Lookup coordinates have separate weather column names.
 
-The derived `data/curated/open_meteo_air_quality/air_quality_weather/` dataset preserves all air-quality columns and uses the existing pollutant/UTC-date partitions. A staged rebuild is read back before publication and leaves original curated air quality unchanged. Its manifest reports counts, match percentage (0?100), locations/sensors, coverage, variables, and columns. Rebuild/publication limitations are the same as M3.
+The derived `data/curated/open_meteo_air_quality/air_quality_weather/` dataset preserves all air-quality columns and uses the existing pollutant/UTC-date partitions. A staged rebuild is read back before publication and leaves original curated air quality unchanged. Its manifest reports counts, match percentage (0 to 100), locations/sensors, coverage, variables, and columns. Rebuild/publication limitations are the same as M3.
 
 ## PostgreSQL analytical warehouse
 
@@ -100,11 +102,42 @@ The warehouse provides relational SQL access to the enriched analytical snapshot
 
 UTC columns use `TIMESTAMPTZ`; partition dates use `DATE`; IDs use `BIGINT`; measurements use `DOUBLE PRECISION`; source/local timestamp strings remain `TEXT`. SQL nulls preserve missing coordinates, parameter IDs, and weather values. PostgreSQL has microsecond timestamp precision: finer input timestamps are rejected before connection rather than rounded into changed natural keys. Conflicting non-null location metadata is also rejected rather than arbitrarily choosing dimension values.
 
+Unmatched observations allow null weather source, hour, measurements and coordinates. The enrichment join may retain an aligned requested hour without a match, which is also valid. A matched source must be `open_meteo` with an hour aligned to period end; measurements and coordinates may still be null. Weather values without a source are rejected. No missing value is replaced with zero.
+
 Input schema, typed mappings, supported pollutants, natural keys, dates and hour alignment are checked before connection. Empty input is refused to avoid clearing a warehouse accidentally. Missing optional provenance fields become null; required schema fields cannot be manufactured. SQL column mappings are explicit and independent of Parquet column order.
 
-Schema/table/index creation is idempotent and part of the refresh transaction; it is not a migration system. Existing incompatible schemas fail rather than being silently changed. The loader locks the two AirAtlas tables against other writers, deletes observations then locations, inserts locations then batched observations, and checks row/location counts, duplicates, supported pollutants and foreign-key references. Only then does the connection context commit. Failures roll back the refresh; table definitions and indexes remain stable. Repeated loads replace the snapshot rather than append. Operations are scoped to the two `airatlas` tables, with no schema drops or cascade refreshes.
+Schema/table/index creation is idempotent and part of the refresh transaction; it is not a migration system. A narrow compatibility repair drops the old `weather_hour_utc NOT NULL` restriction inside this transaction; other incompatible schemas require investigation. The loader locks the two AirAtlas tables against other writers, deletes observations then locations, inserts locations then batched observations, and checks row/location counts, duplicates, supported pollutants and foreign-key references. Only then does the connection context commit. Failures roll back the refresh; table definitions and indexes remain stable. Repeated loads replace the snapshot rather than append. Operations are scoped to the two `airatlas` tables, with no schema drops or cascade refreshes.
 
 Examples in `sql/example_queries.sql` cover recent observations, averages by location, weather comparisons and daily trends. They group by pollutant and unit, avoiding incompatible concentration averages. These are descriptive observation-weighted summaries, not causal or duration-weighted analyses.
+
+## dbt analytics
+
+The Python warehouse loader owns `airatlas.locations` and `airatlas.observations`. dbt declares these as sources under `airatlas_warehouse` and reads them without refreshing or mutating them. With the default target `airatlas_analytics`, folder schemas keep each dbt layer separate:
+
+- **Staging views** in `airatlas_analytics_staging`: `stg_locations` and `stg_observations` expose explicit warehouse columns without aggregation, unit conversion or filtering out missing weather.
+- **Intermediate view** in `airatlas_analytics_intermediate`: `int_air_quality_weather` left-joins canonical location metadata while retaining observation provenance. `has_weather_context` is true when `weather_source` is present; individual weather values may still be null.
+- **Mart tables** in `airatlas_analytics_marts`: rebuilt from dbt model references, with no incremental state or snapshots.
+
+| Mart | Grain | Purpose |
+| --- | --- | --- |
+| `fct_air_quality_observations` | Location ID, sensor ID, parameter, UTC period start and end | All validated observations, source provenance and nullable weather; no aggregation. |
+| `agg_daily_air_quality` | UTC period-end date x location x pollutant x unit | Counts, mean/minimum/maximum concentration and weather coverage. |
+| `agg_location_air_quality` | Location x pollutant x unit | Concentration statistics, earliest/latest period end and weather coverage across the snapshot. |
+| `agg_pollution_weather` | UTC period-end date x location x pollutant x unit, matched observations only | Pollution and weather means with non-null weather sample counts. |
+
+Location names are descriptive attributes, not grouping identity. PM2.5 and PM10 and their source units remain separate. Means are observation-weighted, not time-weighted. Weather averages describe the weather sampled by matched observations; repeated hours may have multiple observations. Precipitation is an average of sampled hourly amounts, **not a daily rainfall total**. These models support association/context analysis without health classification or causal claims.
+
+Built-in tests check required fields, accepted pollutants and location relationships. Singular SQL tests protect natural-key uniqueness, source-to-fact row counts, aggregate grains, positive counts, valid ranges and weather-matched group counts. Nullable weather hours and measurements are intentionally not required by `not_null` tests. The project contains 7 models, 2 sources and 89 data tests.
+
+## Local PostgreSQL validation
+
+For M5 completion, the developer verified the production loader and dbt against a real **local PostgreSQL 17** database named `airatlas`, using a deterministic enriched Parquet fixture. This is local development evidence, not a production/cloud deployment or a claim of live source coverage.
+
+- The loader wrote 2 locations and 6 observations (4 PM2.5, 2 PM10; 5 weather-matched, 1 unmatched). The requested fixture spans period start `2026-09-01T10:00:00+00:00` through period end `2026-09-02T11:00:00+00:00`.
+- A second refresh retained 6 observations, not 12. PostgreSQL inspection confirmed nullable `weather_hour_utc`, natural-key uniqueness, the location foreign key, pollutant/period checks and analytical indexes.
+- `dbt debug` passed. `dbt build` executed all 7 models and 89 data tests: **PASS=96, WARN=0, ERROR=0, SKIP=0, TOTAL=96**. Source tables remained in `airatlas`, with models in the separate staging, intermediate and marts schemas.
+- Representative queries returned 6 fact rows, 5 daily rows, 4 location rows and 4 weather-context rows. Jabavu-NAQI PM2.5 on September 1 had 2 observations averaging 12.7; Table View-NAQI PM2.5 averaged 8.7 across 2 observations. Pollutant and unit remained visible in each aggregate.
+- `dbt docs generate` produced the catalog successfully. Generated files under `dbt/target/` remain ignored.
 
 ## Data layers and future architecture
 
@@ -114,13 +147,14 @@ Examples in `sql/example_queries.sql` cover recent observations, averages by loc
 | `data/processed/` | Rebuildable validated, normalized, deduplicated CSV observations and a quality report. |
 | `data/curated/` | Rebuildable air-quality and weather-enriched Parquet datasets, plus manifests. |
 | PostgreSQL `airatlas` | Queryable relational analytical storage rebuilt transactionally from enriched Parquet. |
+| dbt analytics schemas | Tested staging/intermediate views and observation, daily, location and weather-context mart tables. |
 
 All generated filesystem layers are Git-ignored. Processing and curation do not alter their inputs.
 
-Planned flow: PostgreSQL warehouse -> dbt models -> FastAPI/dashboard. Apache Airflow will orchestrate stages. The dashboard is an output layer; its technology has not been selected. dbt models, Airflow DAGs, API endpoints, and dashboard functionality do not exist yet. M4 weather enrichment and warehouse loading are implemented.
+Planned flow: dbt analytics marts -> API/dashboard. Apache Airflow will orchestrate stages. The dashboard is an output layer; its technology has not been selected. Airflow DAGs, API endpoints, and dashboard functionality do not exist yet.
 
 ## Foundation tooling
 
-Python uses a `src/` package layout and setuptools with editable installation. Python 3.12 is the recommended baseline. Ruff handles linting/formatting; pytest exercises offline ingestion, processing, and temporary-directory JSON/CSV/Parquet storage. Warehouse unit tests use fake Psycopg connections, so CI requires no PostgreSQL service. Real database validation is optional and reported separately. GitHub Actions runs installation and checks on pushes and pull requests, without deployment.
+Python uses a `src/` package layout and setuptools with editable installation. Python 3.12 is the recommended baseline. Ruff handles linting/formatting; pytest exercises offline ingestion, processing, and temporary-directory JSON/CSV/Parquet storage. Warehouse unit tests use fake Psycopg connections, so CI requires no PostgreSQL service. CI also runs database-free dbt parsing. Real local PostgreSQL execution passed the M5 completion gate, as recorded above; it remains separate from CI. GitHub Actions runs installation and checks on pushes and pull requests, without deployment.
 
 See the [development guide](development.md) or [project overview](../README.md).

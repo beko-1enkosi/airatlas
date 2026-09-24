@@ -1,6 +1,6 @@
 # AirAtlas
 
-AirAtlas is a Data Engineering portfolio project for building an end-to-end air-quality data platform using public environmental data. It acquires OpenAQ air-quality data, builds validated observations, adds historical Open-Meteo weather context, and loads the enriched dataset into PostgreSQL.
+AirAtlas is a Data Engineering portfolio project for building an end-to-end air-quality data platform using public environmental data. It acquires OpenAQ air-quality data, builds validated observations, adds historical Open-Meteo weather context, loads the enriched dataset into PostgreSQL, and builds tested dbt analytics marts.
 
 ## Problem statement
 
@@ -32,6 +32,8 @@ OpenAQ API v3
   -> Location/hour weather enrichment
   -> Weather-enriched Parquet
   -> PostgreSQL analytical warehouse
+  -> dbt sources -> staging views -> intermediate observation view
+  -> Analytics marts
 ```
 
 The approved stations are in [config/mvp_locations.json](config/mvp_locations.json). Raw JSON preserves source measurement objects with location, sensor, window, and retrieval provenance. Identical repeated batches are reused; conflicting content never silently replaces a snapshot.
@@ -39,14 +41,13 @@ The approved stations are in [config/mvp_locations.json](config/mvp_locations.js
 ## Planned architecture
 
 ```text
-PostgreSQL warehouse
-  -> dbt analytical models
+dbt analytics marts
   -> FastAPI / dashboard serving layer
 
 Apache Airflow will orchestrate pipeline stages.
 ```
 
-dbt analytical modeling, orchestration, and serving remain planned. See the [architecture document](docs/architecture.md) for current and future responsibilities.
+Orchestration and serving remain planned. See the [architecture document](docs/architecture.md) for current and future responsibilities.
 
 ## Repository structure
 
@@ -58,6 +59,14 @@ AirAtlas/
 |   |-- raw/.gitkeep
 |   |-- processed/.gitkeep
 |   `-- curated/.gitkeep
+|-- dbt/
+|   |-- dbt_project.yml
+|   |-- profiles.yml
+|   |-- models/
+|   |   |-- staging/
+|   |   |-- intermediate/
+|   |   `-- marts/
+|   `-- tests/
 |-- docs/
 |   |-- architecture.md
 |   `-- development.md
@@ -85,7 +94,7 @@ AirAtlas/
 `-- README.md
 ```
 
-`ingestion/` retrieves OpenAQ data; `storage/` preserves raw batches; `processing/` validates and deduplicates observations; `curation/` publishes Parquet; `weather/` retrieves and joins hourly weather; `warehouse/` loads PostgreSQL. `scripts/` provides terminal entry points, and `tests/` covers the pipeline offline using temporary datasets. Generated data and local credentials are ignored by Git; the tree shows tracked placeholders, not generated datasets.
+`ingestion/` retrieves OpenAQ data; `storage/` preserves raw batches; `processing/` validates and deduplicates observations; `curation/` publishes Parquet; `weather/` retrieves and joins hourly weather; `warehouse/` loads PostgreSQL. `dbt/` contains source declarations, analytical models and SQL tests; `sql/` provides warehouse and mart query examples. `scripts/` provides terminal entry points, and `tests/` covers the pipeline offline using temporary datasets. Generated data and local credentials are ignored by Git; the tree shows tracked placeholders, not generated datasets.
 
 ## Current status and milestones
 
@@ -97,6 +106,8 @@ AirAtlas/
 
 **M4 — Weather & Warehouse: complete**
 
+**M5 — Analytics with dbt: complete**
+
 M1 provides Python packaging, a development environment, Ruff, pytest, GitHub Actions CI, and documentation. M2 adds OpenAQ API v3 integration, South African location discovery, six approved MVP stations, PM2.5/PM10 historical backfill and incremental retrieval, automatic pagination, bounded retries, rate-limit handling, and deterministic raw JSON persistence.
 
 AirAtlas can now discover South African OpenAQ sources, retrieve complete historical or incremental PM2.5/PM10 measurements for its configured stations, and preserve those source records in a raw data layer. Retrieval failures are surfaced rather than treated as complete. Incremental checkpoints are supplied explicitly and returned as candidates; durable checkpoint management is not implemented.
@@ -104,6 +115,12 @@ AirAtlas can now discover South African OpenAQ sources, retrieve complete histor
 M3 adds raw JSON loading, a normalized observation schema, record validation and rejection reporting, duplicate removal and conflict detection, processed CSV and a quality report, and curated Parquet partitioned by pollutant and UTC measurement date. AirAtlas can now transform immutable raw batches into validated, deduplicated observations and publish an analysis-ready dataset. Source units and both measurement-period boundaries are retained; finite negative values are counted rather than scientifically classified or automatically removed.
 
 M4 adds historical Open-Meteo ingestion with raw caching, temperature, relative humidity, precipitation and wind-speed enrichment by location and UTC hour, weather-enriched Parquet, and a PostgreSQL analytical warehouse. Transactional full refreshes, relational constraints, and analytical indexes support predictable repeat loads. AirAtlas can now enrich curated PM2.5/PM10 observations with historical weather context and publish a queryable warehouse. Coordinates must be present in curated observations or confirmed configuration; missing coordinates fail rather than being guessed.
+
+M5 adds PostgreSQL source definitions, staging views, a reusable intermediate model with `has_weather_context`, and four table marts for observation-level, daily, location-level, and weather-context analysis. YAML model/column documentation and source/model tests protect required fields, relationships, pollutant values, natural keys, row counts, and aggregate grains. Pollutants and units stay separate; weather-unmatched observations remain valid fact rows.
+
+The M5 completion gate was verified by the developer against **local PostgreSQL 17**: the production warehouse loader retained 6 observations across two identical refreshes, and `dbt debug`, `dbt build`, representative mart queries, and `dbt docs generate` succeeded. The build passed all **7 models and 89 data tests** (96 passes, no warnings, errors or skips). This also validates the M4 warehouse against a real development database; it is not a cloud/production deployment. See the [architecture validation summary](docs/architecture.md#local-postgresql-validation).
+
+AirAtlas can now transform its PostgreSQL warehouse into tested, documented analytical dbt models for observation-level, daily, location-level and weather-context analysis.
 
 ## Development
 
@@ -114,7 +131,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-The editable installation uses the source in `src/airatlas`; `[dev]` adds Ruff and pytest.
+The editable installation uses the source in `src/airatlas`; `[dev]` adds Ruff, pytest, dbt Core and the PostgreSQL adapter. The [development guide](docs/development.md#m5-dbt-workflow) covers database configuration and dbt commands.
 
 ## Quality commands
 
@@ -124,15 +141,16 @@ python -m ruff format --check .
 python -m pytest
 ```
 
-GitHub Actions runs installation and these checks on pushes and pull requests using Ubuntu and Python 3.12. CI validates code quality and tests; it does not deploy the project.
+GitHub Actions runs installation and these checks on pushes and pull requests using Ubuntu and Python 3.12. CI also parses the dbt project with harmless placeholders and no database connection. Parsing does not prove SQL execution; CI does not deploy the project.
 
 ## Roadmap
 
 1. **Foundation (M1) - complete:** repository structure, development environment, Ruff, pytest, CI, and documentation.
 2. **Data Acquisition (M2) - complete:** OpenAQ discovery, configured PM2.5/PM10 retrieval, API reliability, and raw JSON persistence. Historical weather enrichment is implemented in M4.
 3. **Processing & Quality (M3) - complete:** normalized observations, validation, quality reporting, deduplication, conflict detection, processed CSV, and partitioned Parquet.
-4. **Weather & Warehouse (M4) - complete:** historical weather enrichment and transactional PostgreSQL snapshot loading. dbt modeling remains planned.
-5. **Orchestration and quality:** schedule workflows with Airflow and expand automated checks.
-6. **Serving and presentation:** expose curated data through an API and dashboard, and document the completed platform.
+4. **Weather & Warehouse (M4) - complete:** historical weather enrichment and transactional PostgreSQL snapshot loading, validated locally on PostgreSQL 17.
+5. **Analytics with dbt (M5) - complete:** sources, staging/intermediate views, four analytics marts, tests, generated dbt documentation, and real local PostgreSQL validation.
+6. **Orchestration and quality (planned):** schedule workflows with Airflow and expand automated checks.
+7. **Serving and presentation (planned):** expose curated data through an API and dashboard, and document the completed platform.
 
-dbt modeling, orchestration, APIs, and dashboards remain planned; no M5/later functionality is implemented.
+Orchestration, APIs, and dashboards remain planned; no M6/later functionality is implemented.

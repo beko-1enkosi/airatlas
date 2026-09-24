@@ -29,7 +29,7 @@ OBSERVATION_TYPES = {
     "source_file": "TEXT",
     "retrieval_datetime_from": "TEXT",
     "retrieval_datetime_to": "TEXT",
-    "weather_hour_utc": "TIMESTAMPTZ NOT NULL",
+    "weather_hour_utc": "TIMESTAMPTZ",
     "temperature_2m_c": "DOUBLE PRECISION",
     "relative_humidity_2m_pct": "DOUBLE PRECISION",
     "precipitation_mm": "DOUBLE PRECISION",
@@ -58,6 +58,9 @@ SCHEMA_STATEMENTS = (
         ),
         CONSTRAINT observations_valid_period CHECK (datetime_to_utc > datetime_from_utc)
     )""",
+    # Narrow, idempotent compatibility repair for warehouses created before
+    # unmatched weather hours became nullable. Runs in the refresh transaction.
+    "ALTER TABLE airatlas.observations ALTER COLUMN weather_hour_utc DROP NOT NULL",
     "CREATE INDEX IF NOT EXISTS observations_location_time_idx ON airatlas.observations (location_id, datetime_to_utc)",
     "CREATE INDEX IF NOT EXISTS observations_parameter_time_idx ON airatlas.observations (parameter, datetime_to_utc)",
     "CREATE INDEX IF NOT EXISTS observations_date_idx ON airatlas.observations (measurement_date_utc)",

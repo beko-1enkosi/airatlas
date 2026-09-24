@@ -1,0 +1,328 @@
+version: 2
+models:
+- name: fct_air_quality_observations
+  description: One row per location, sensor, pollutant and UTC period start/end. Retains
+    all intermediate observations, source provenance and nullable weather without
+    aggregation or unit conversion.
+  columns:
+  - name: location_id
+    description: Stable OpenAQ monitoring-location identifier; names are not observation
+      identity.
+    data_tests:
+    - not_null
+    - relationships:
+        arguments:
+          to: ref('stg_locations')
+          field: location_id
+  - name: location_name
+    description: Source location name retained by the warehouse; may be null.
+  - name: sensor_id
+    description: Stable OpenAQ sensor identifier associated with this pollutant observation.
+    data_tests:
+    - not_null
+  - name: parameter
+    description: OpenAQ pollutant code, pm25 or pm10; keep pollutants separate in
+      analysis.
+    data_tests:
+    - not_null
+    - accepted_values:
+        arguments:
+          values:
+          - pm25
+          - pm10
+  - name: parameter_id
+    description: Optional OpenAQ parameter identifier from source measurement metadata.
+  - name: unit
+    description: Unconverted source concentration unit; later aggregations must group
+      by pollutant and unit.
+    data_tests:
+    - not_null
+  - name: value
+    description: Air-quality concentration reported by OpenAQ for the observation
+      period; finite negative values are retained.
+    data_tests:
+    - not_null
+  - name: period_label
+    description: Source label describing the measurement period, where supplied.
+  - name: period_interval
+    description: Source interval text, retained without assuming all observations
+      have equal duration.
+  - name: datetime_from_utc
+    description: Timezone-aware start of the OpenAQ measurement period.
+    data_tests:
+    - not_null
+  - name: datetime_to_utc
+    description: Timezone-aware end of the period; basis for UTC date and weather-hour
+      alignment.
+    data_tests:
+    - not_null
+  - name: datetime_from_local
+    description: Optional original local period-start text, without timezone reinterpretation.
+  - name: datetime_to_local
+    description: Optional original local period-end text, without timezone reinterpretation.
+  - name: measurement_date_utc
+    description: UTC calendar date of the measurement-period end, stored as a PostgreSQL
+      date.
+    data_tests:
+    - not_null
+  - name: latitude
+    description: Available source latitude in decimal degrees; a missing coordinate
+      stays null.
+  - name: longitude
+    description: Available source longitude in decimal degrees; a missing coordinate
+      stays null.
+  - name: source
+    description: Air-quality source identifier, currently openaq.
+    data_tests:
+    - not_null
+  - name: source_file
+    description: Relative raw batch path retained for investigation of the source
+      observation.
+  - name: retrieval_datetime_from
+    description: Requested source retrieval lower boundary, preserved as date or timestamp
+      text.
+  - name: retrieval_datetime_to
+    description: Requested source retrieval upper boundary, preserved as date or timestamp
+      text.
+  - name: weather_hour_utc
+    description: UTC measurement-period end floored to an hour for exact location/hour
+      weather matching.
+  - name: temperature_2m_c
+    description: Historical 2-metre temperature in Celsius; unavailable values remain
+      null.
+  - name: relative_humidity_2m_pct
+    description: Historical 2-metre relative humidity in percent; unavailable values
+      remain null.
+  - name: precipitation_mm
+    description: Historical hourly precipitation in millimetres; null does not mean
+      zero.
+  - name: wind_speed_10m_kmh
+    description: Historical 10-metre wind speed in kilometres per hour; unavailable
+      values remain null.
+  - name: weather_source
+    description: Matched weather source, currently open_meteo; null indicates no usable
+      weather context.
+  - name: weather_latitude
+    description: Latitude used for the historical weather lookup, when weather matched.
+  - name: weather_longitude
+    description: Longitude used for the historical weather lookup, when weather matched.
+  - name: canonical_location_name
+    description: Location dimension name; the original observation location_name is
+      retained separately.
+  - name: canonical_latitude
+    description: Location dimension latitude when known, without replacing observation
+      coordinates.
+  - name: canonical_longitude
+    description: Location dimension longitude when known, without replacing observation
+      coordinates.
+  - name: has_weather_context
+    description: True when weather_source is present. A match may still contain individual
+      null weather values.
+    data_tests:
+    - not_null
+- name: agg_daily_air_quality
+  description: One row per location, pollutant, unit and UTC measurement-period end
+    date. Observation-weighted concentration statistics with weather coverage; units
+    remain separate.
+  columns:
+  - name: measurement_date_utc
+    description: UTC calendar date of the measurement-period end, stored as a PostgreSQL
+      date.
+    data_tests:
+    - not_null
+  - name: location_id
+    description: Stable OpenAQ monitoring-location identifier; names are not observation
+      identity.
+    data_tests:
+    - not_null
+  - name: parameter
+    description: OpenAQ pollutant code, pm25 or pm10; keep pollutants separate in
+      analysis.
+    data_tests:
+    - not_null
+    - accepted_values:
+        arguments:
+          values:
+          - pm25
+          - pm10
+  - name: unit
+    description: Unconverted source concentration unit; later aggregations must group
+      by pollutant and unit.
+    data_tests:
+    - not_null
+  - name: location_name
+    description: Canonical location dimension name; nullable and descriptive, never
+      part of observation identity.
+  - name: observation_count
+    description: Number of source observations represented; not a count of unique
+      weather hours.
+    data_tests:
+    - not_null
+  - name: average_value
+    description: Observation-weighted mean concentration, within one pollutant and
+      source unit.
+    data_tests:
+    - not_null
+  - name: minimum_value
+    description: Smallest observed concentration, including finite negative source
+      values.
+    data_tests:
+    - not_null
+  - name: maximum_value
+    description: Largest observed concentration in this group.
+    data_tests:
+    - not_null
+  - name: weather_context_count
+    description: Observations whose weather_source is present; individual weather
+      measurements may still be null.
+    data_tests:
+    - not_null
+  - name: weather_context_percentage
+    description: Percentage from 0 to 100 of observations with weather context.
+    data_tests:
+    - not_null
+- name: agg_location_air_quality
+  description: One row per location, pollutant, unit across the available snapshot.
+    Observation-weighted concentration statistics with weather coverage; units remain
+    separate.
+  columns:
+  - name: location_id
+    description: Stable OpenAQ monitoring-location identifier; names are not observation
+      identity.
+    data_tests:
+    - not_null
+  - name: parameter
+    description: OpenAQ pollutant code, pm25 or pm10; keep pollutants separate in
+      analysis.
+    data_tests:
+    - not_null
+    - accepted_values:
+        arguments:
+          values:
+          - pm25
+          - pm10
+  - name: unit
+    description: Unconverted source concentration unit; later aggregations must group
+      by pollutant and unit.
+    data_tests:
+    - not_null
+  - name: location_name
+    description: Canonical location dimension name; nullable and descriptive, never
+      part of observation identity.
+  - name: observation_count
+    description: Number of source observations represented; not a count of unique
+      weather hours.
+    data_tests:
+    - not_null
+  - name: average_value
+    description: Observation-weighted mean concentration, within one pollutant and
+      source unit.
+    data_tests:
+    - not_null
+  - name: minimum_value
+    description: Smallest observed concentration, including finite negative source
+      values.
+    data_tests:
+    - not_null
+  - name: maximum_value
+    description: Largest observed concentration in this group.
+    data_tests:
+    - not_null
+  - name: earliest_observation_utc
+    description: Earliest measurement-period end in this group, as a timezone-aware
+      timestamp.
+    data_tests:
+    - not_null
+  - name: latest_observation_utc
+    description: Latest measurement-period end in this group, as a timezone-aware
+      timestamp.
+    data_tests:
+    - not_null
+  - name: weather_context_count
+    description: Observations whose weather_source is present; individual weather
+      measurements may still be null.
+    data_tests:
+    - not_null
+  - name: weather_context_percentage
+    description: Percentage from 0 to 100 of observations with weather context.
+    data_tests:
+    - not_null
+- name: agg_pollution_weather
+  description: One row per location, pollutant, unit and UTC measurement-period end
+    date. Only weather-matched observations; weather averages use their non-null observation
+    samples. No rainfall total or causal interpretation.
+  columns:
+  - name: measurement_date_utc
+    description: UTC calendar date of the measurement-period end, stored as a PostgreSQL
+      date.
+    data_tests:
+    - not_null
+  - name: location_id
+    description: Stable OpenAQ monitoring-location identifier; names are not observation
+      identity.
+    data_tests:
+    - not_null
+  - name: parameter
+    description: OpenAQ pollutant code, pm25 or pm10; keep pollutants separate in
+      analysis.
+    data_tests:
+    - not_null
+    - accepted_values:
+        arguments:
+          values:
+          - pm25
+          - pm10
+  - name: unit
+    description: Unconverted source concentration unit; later aggregations must group
+      by pollutant and unit.
+    data_tests:
+    - not_null
+  - name: location_name
+    description: Canonical location dimension name; nullable and descriptive, never
+      part of observation identity.
+  - name: observation_count
+    description: Number of source observations represented; not a count of unique
+      weather hours.
+    data_tests:
+    - not_null
+  - name: average_pollution_value
+    description: Observation-weighted mean concentration among weather-matched observations
+      only; no causal interpretation.
+    data_tests:
+    - not_null
+  - name: average_temperature_2m_c
+    description: Observation-weighted mean Celsius temperature among non-null matched
+      values. Repeated weather hours can carry multiple observations; this is not
+      a full-day weather statistic.
+  - name: average_relative_humidity_2m_pct
+    description: Observation-weighted mean relative humidity in percent among non-null
+      matched values. Repeated weather hours can carry multiple observations; this
+      is not a full-day weather statistic.
+  - name: average_precipitation_mm
+    description: Observation-weighted mean hourly precipitation in millimetres among
+      non-null matched values. Repeated weather hours can carry multiple observations;
+      this is not a full-day weather statistic.
+  - name: average_wind_speed_10m_kmh
+    description: Observation-weighted mean wind speed in kilometres per hour among
+      non-null matched values. Repeated weather hours can carry multiple observations;
+      this is not a full-day weather statistic.
+  - name: temperature_observation_count
+    description: Matched observations with a non-null temperature value; denominator
+      for the corresponding average.
+    data_tests:
+    - not_null
+  - name: humidity_observation_count
+    description: Matched observations with a non-null humidity value; denominator
+      for the corresponding average.
+    data_tests:
+    - not_null
+  - name: precipitation_observation_count
+    description: Matched observations with a non-null precipitation value; denominator
+      for the corresponding average.
+    data_tests:
+    - not_null
+  - name: wind_observation_count
+    description: Matched observations with a non-null wind value; denominator for
+      the corresponding average.
+    data_tests:
+    - not_null

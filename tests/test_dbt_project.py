@@ -83,4 +83,55 @@ def test_profile_is_environment_based_and_models_are_separate_views():
     assert settings["+materialized"] == "view"
     assert settings["staging"]["+schema"] == "staging"
     assert settings["intermediate"]["+schema"] == "intermediate"
-    assert not (DBT / "models/marts").exists()
+    assert settings["marts"]["+schema"] == "marts"
+    assert settings["marts"]["+materialized"] == "table"
+
+
+def test_marts_are_documented_and_use_model_dependencies():
+    models = read_yaml("models/marts/_marts.yml")["models"]
+    expected = {
+        "fct_air_quality_observations",
+        "agg_daily_air_quality",
+        "agg_location_air_quality",
+        "agg_pollution_weather",
+    }
+    assert {model["name"] for model in models} == expected
+    assert {path.stem for path in (DBT / "models/marts").glob("*.sql")} == expected
+    for model in models:
+        assert model["description"].startswith("One row per")
+        assert all(column.get("description") for column in model["columns"])
+        sql = (DBT / "models/marts" / (model["name"] + ".sql")).read_text()
+        dependency = (
+            "int_air_quality_weather"
+            if model["name"] == "fct_air_quality_observations"
+            else "fct_air_quality_observations"
+        )
+        assert "ref('" + dependency + "')" in sql
+        assert "source(" not in sql and "airatlas." not in sql
+
+
+def test_fact_retains_intermediate_columns_and_nullable_weather():
+    intermediate = read_yaml("models/intermediate/_intermediate.yml")["models"][0]
+    fact = read_yaml("models/marts/_marts.yml")["models"][0]
+    assert fact["columns"] == intermediate["columns"]
+    for column in fact["columns"]:
+        if column["name"] in {"weather_source", "temperature_2m_c", "precipitation_mm"}:
+            assert "not_null" not in column.get("data_tests", [])
+
+
+def test_dbt_generated_artifacts_are_ignored():
+    import subprocess
+
+    paths = [
+        "dbt/target/manifest.json",
+        "dbt/logs/dbt.log",
+        "dbt/dbt_packages/pkg/file.sql",
+    ]
+    result = subprocess.run(
+        ["git", "check-ignore", *paths],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert set(result.stdout.splitlines()) == set(paths)

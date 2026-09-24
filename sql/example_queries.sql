@@ -35,3 +35,36 @@ SELECT measurement_date_utc, location_id, parameter, unit,
 FROM airatlas.observations
 GROUP BY measurement_date_utc, location_id, parameter, unit
 ORDER BY measurement_date_utc, location_id, parameter, unit;
+
+-- dbt mart examples: run after a successful dbt build.
+-- These use the default target schema; adjust the prefix for a custom target.
+-- Daily PM2.5 trend, separated by original source unit.
+SELECT measurement_date_utc, location_id, location_name, parameter, unit,
+       observation_count, average_value, weather_context_percentage
+FROM airatlas_analytics_marts.agg_daily_air_quality
+WHERE parameter = 'pm25'
+ORDER BY measurement_date_utc, location_id, unit;
+
+-- Location PM10 averages over the current warehouse snapshot.
+SELECT location_id, location_name, parameter, unit, observation_count,
+       average_value, earliest_observation_utc, latest_observation_utc
+FROM airatlas_analytics_marts.agg_location_air_quality
+WHERE parameter = 'pm10'
+ORDER BY location_id, unit;
+
+-- Weather-associated pollution; observation-weighted means, not causal effects.
+-- Precipitation is a mean of sampled hourly values, not a daily rainfall total.
+SELECT measurement_date_utc, location_id, parameter, unit, observation_count,
+       average_pollution_value, average_temperature_2m_c,
+       average_relative_humidity_2m_pct, average_precipitation_mm,
+       average_wind_speed_10m_kmh
+FROM airatlas_analytics_marts.agg_pollution_weather
+ORDER BY measurement_date_utc, location_id, parameter, unit;
+
+-- Latest observation per location, pollutant and unit, with deterministic ties.
+SELECT DISTINCT ON (location_id, parameter, unit)
+       location_id, canonical_location_name, sensor_id, parameter, unit, value,
+       datetime_from_utc, datetime_to_utc, has_weather_context
+FROM airatlas_analytics_marts.fct_air_quality_observations
+ORDER BY location_id, parameter, unit, datetime_to_utc DESC,
+         datetime_from_utc DESC, sensor_id;
