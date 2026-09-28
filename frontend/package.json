@@ -1,0 +1,26 @@
+{
+  "name": "airatlas-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host localhost",
+    "build": "vite build",
+    "preview": "vite preview --host localhost",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "leaflet": "^1.9.4",
+    "react-leaflet": "^5.0.0",
+    "recharts": "^3.8.0"
+  },
+  "devDependencies": {
+    "vite": "^8.0.0",
+    "@vitejs/plugin-react": "^6.0.0"
+  }
+}
