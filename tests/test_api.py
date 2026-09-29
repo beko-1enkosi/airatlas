@@ -354,3 +354,45 @@ def test_populated_series_preserves_mart_values(client, monkeypatch, kind):
     assert response.status_code == 200
     assert response.json()["rows"][0]["unit"] == "µg/m³"
     assert response.json()["rows"][0]["measurement_date_utc"] == "2026-09-01"
+
+
+@pytest.mark.parametrize(
+    "identifier,name,latitude,longitude",
+    [
+        (225404, "Table View-NAQI", -33.819667, 18.514333),
+        (225396, "Saltworks-NAQI", -33.763778, 25.683428),
+        (355971, "Ratanang", -25.483507788469588, 27.167539254241067),
+    ],
+)
+def test_canonical_coordinates_reach_location_endpoints(
+    client, monkeypatch, identifier, name, latitude, longitude
+):
+    # Query the canonical dimension through the real query functions and routes.
+    dimension = {
+        "location_id": identifier,
+        "location_name": name,
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+
+    def query(statement, parameters=()):
+        sql = statement if isinstance(statement, str) else statement.as_string()
+        if "FROM airatlas.locations" in sql:
+            assert "latitude" in sql and "longitude" in sql
+            if parameters:
+                assert parameters == (identifier,)
+                return [dict(dimension)]
+            return [{**dimension, "parameters": ["pm25", "pm10"]}]
+        return []
+
+    monkeypatch.setattr(queries, "query", query)
+    listing = client.get("/api/locations")
+    detail = client.get(f"/api/locations/{identifier}")
+    assert listing.status_code == detail.status_code == 200
+    for row in [listing.json()[0], detail.json()]:
+        assert row["latitude"] == latitude
+        assert row["longitude"] == longitude
+        assert isinstance(row["latitude"], float) and -90 <= row["latitude"] <= 90
+        assert isinstance(row["longitude"], float) and -180 <= row["longitude"] <= 180
+    assert set(listing.json()[0]) == {*dimension, "parameters"}
+    assert set(detail.json()) == {*dimension, "latest", "recent"}

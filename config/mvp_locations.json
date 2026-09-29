@@ -22,37 +22,49 @@
       "id": 225448,
       "name": "Jabavu-NAQI",
       "locality": "City of Johannesburg",
-      "country_code": "ZA"
+      "country_code": "ZA",
+      "latitude": -26.252611,
+      "longitude": 27.872139
     },
     {
       "id": 225404,
       "name": "Table View-NAQI",
       "locality": "Western Cape",
-      "country_code": "ZA"
+      "country_code": "ZA",
+      "latitude": -33.819667,
+      "longitude": 18.514333
     },
     {
       "id": 6868,
       "name": "Brackenham - RBCAA",
       "locality": "KwaZulu-Natal",
-      "country_code": "ZA"
+      "country_code": "ZA",
+      "latitude": -28.731301,
+      "longitude": 32.039016
     },
     {
       "id": 225396,
       "name": "Saltworks-NAQI",
       "locality": "Eastern Cape",
-      "country_code": "ZA"
+      "country_code": "ZA",
+      "latitude": -33.763778,
+      "longitude": 25.683428
     },
     {
       "id": 925659,
       "name": "Good Hope School",
       "locality": "Polokwane",
-      "country_code": "ZA"
+      "country_code": "ZA",
+      "latitude": -23.90677,
+      "longitude": 29.431096
     },
     {
       "id": 355971,
       "name": "Ratanang",
       "locality": "North West",
-      "country_code": "ZA"
+      "country_code": "ZA",
+      "latitude": -25.483507788469588,
+      "longitude": 27.167539254241067
     }
   ]
 }

@@ -1,5 +1,6 @@
 """Read-only Parquet input and one transactional full refresh of airatlas tables."""
 
+import json
 import math
 import os
 from datetime import UTC, date, datetime
@@ -21,6 +22,7 @@ from airatlas.warehouse.schema import (
     VALIDATE_SQL,
     ensure_schema,
 )
+from airatlas.weather.client import WeatherError, coordinates
 from airatlas.weather.enrichment import WEATHER_COLUMNS
 
 
@@ -77,7 +79,7 @@ def _sql_value(column, value):
     return value
 
 
-def prepare_input(input_dir):
+def prepare_input(input_dir, *, locations=None):
     """Return explicitly ordered location/observation tuples and a safe summary.
 
     Empty inputs fail before connecting, avoiding accidental snapshot deletion.
@@ -108,7 +110,14 @@ def prepare_input(input_dir):
             continue
         if not pa.types.is_timestamp(table.schema.field(column).type):
             raise WarehouseError(f"{column} must have a timestamp type.")
-    records, seen, dimensions = [], set(), {}
+    if locations is None:
+        locations = json.loads(
+            (
+                Path(__file__).resolve().parents[3] / "config/mvp_locations.json"
+            ).read_text(encoding="utf-8")
+        )["locations"]
+    configured = {location["id"]: location for location in locations}
+    records, seen, dimensions, station_pairs = [], set(), {}, {}
     for source in table.to_pylist():
         row = {
             column: _sql_value(column, source.get(column))
@@ -151,6 +160,12 @@ def prepare_input(input_dir):
         if key in seen:
             raise WarehouseError("Duplicate natural observation key in enriched input.")
         seen.add(key)
+        # Validate source components even when only half a pair is available.
+        for column, bound in (("latitude", 90), ("longitude", 180)):
+            if row[column] is not None and not -bound <= row[column] <= bound:
+                raise WarehouseError(f"{column} is outside geographic bounds.")
+        if row["latitude"] is not None and row["longitude"] is not None:
+            station_pairs[row["location_id"]] = (row["latitude"], row["longitude"])
         dimension = dimensions.setdefault(
             row["location_id"], dict.fromkeys(LOCATION_COLUMNS)
         )
@@ -164,6 +179,24 @@ def prepare_input(input_dir):
                 )
             dimension[column] = value
         records.append(row)
+    for identifier, dimension in dimensions.items():
+        pair = station_pairs.get(identifier)
+        if pair is None:
+            location = configured.get(identifier, {})
+            fallback = location.get("coordinates") or location
+            if (
+                fallback.get("latitude") is not None
+                and fallback.get("longitude") is not None
+            ):
+                try:
+                    pair = coordinates(fallback["latitude"], fallback["longitude"])
+                except WeatherError:
+                    raise WarehouseError(
+                        f"Invalid confirmed coordinates for location {identifier}."
+                    ) from None
+        # Never use a weather grid or combine partial pairs from different sources.
+        # Only the canonical dimension is enriched; observation provenance stays intact.
+        dimension["latitude"], dimension["longitude"] = pair or (None, None)
     records.sort(key=lambda row: tuple(row[column] for column in KEY))
     locations = [
         tuple(dimensions[key][column] for column in LOCATION_COLUMNS)
