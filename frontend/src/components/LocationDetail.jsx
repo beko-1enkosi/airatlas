@@ -16,6 +16,7 @@ export default function LocationDetail({ id, recent = false }) {
       <p className="eyebrow">Selected location</p>
       <State
         resource={resource}
+        skeleton="detail"
         empty={!location}
         message="Choose a monitoring location to explore its observations."
       >
@@ -77,7 +78,7 @@ export default function LocationDetail({ id, recent = false }) {
                   <table>
                     <thead>
                       <tr>
-                        <th>Period end (UTC)</th>
+                        <th>Period end (SAST)</th>
                         <th>Pollutant</th>
                         <th>Value</th>
                       </tr>

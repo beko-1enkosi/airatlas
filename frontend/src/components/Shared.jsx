@@ -1,18 +1,14 @@
+import CountUp from "./CountUp.jsx";
 import { number, pollutant, timestamp } from "../services/format.js";
 
 export function State({
   resource,
+  skeleton = "chart",
   children,
   empty = false,
   message = "No observations available yet.",
 }) {
-  if (resource.loading)
-    return (
-      <div className="state loading" role="status">
-        <span className="loading-line" />
-        <span>Loading observations…</span>
-      </div>
-    );
+  if (resource.loading) return <Skeleton kind={skeleton} />;
   if (resource.error)
     return (
       <div className="state" role="alert">
@@ -67,11 +63,13 @@ export function SectionHeading({ eyebrow, title, children }) {
 
 export function Metrics({ resource }) {
   return (
-    <State resource={resource}>
+    <State resource={resource} skeleton="metrics">
       <div className="metrics">
         <article className="metric">
           <span>Monitored locations</span>
-          <strong>{number(resource.data?.monitored_locations)}</strong>
+          <strong>
+            <CountUp value={resource.data?.monitored_locations} integer />
+          </strong>
           <small>Represented in the warehouse</small>
         </article>
         {["pm25", "pm10"].map((parameter) => (
@@ -84,7 +82,7 @@ export function Metrics({ resource }) {
                 .filter((row) => row.parameter === parameter)
                 .map((row) => (
                   <strong key={row.unit}>
-                    {number(row.average_value)} <em>{row.unit}</em>
+                    <CountUp value={row.average_value} /> <em>{row.unit}</em>
                   </strong>
                 ))
             ) : (
@@ -96,7 +94,7 @@ export function Metrics({ resource }) {
         <article className="metric accent">
           <span>Weather coverage</span>
           <strong>
-            {number(resource.data?.weather_coverage)}
+            <CountUp value={resource.data?.weather_coverage} />
             <em>{resource.data?.weather_coverage != null ? "%" : ""}</em>
           </strong>
           <small>Observations with weather context</small>
@@ -125,7 +123,7 @@ export function PollutantTabs({ value, onChange }) {
 export function PipelineCard({ resource, full = false }) {
   const run = resource.data?.latest_run;
   return (
-    <State resource={resource}>
+    <State resource={resource} skeleton="health">
       <div className={`pipeline-card ${full ? "full" : ""}`}>
         <div>
           <p className="eyebrow">Pipeline status</p>
@@ -185,11 +183,33 @@ export function PipelineCard({ resource, full = false }) {
           </dl>
         )}
         {!full && (
-          <a className="text-link" href="#/health">
+          <a className="text-link" href="#data-health">
             View data health <span aria-hidden="true">↗</span>
           </a>
         )}
       </div>
     </State>
+  );
+}
+
+export function Skeleton({ kind = "chart" }) {
+  return (
+    <div
+      className={`skeleton skeleton-${kind}`}
+      role="status"
+      aria-label="Loading observations"
+      aria-busy="true"
+    >
+      <span className="sr-only">Loading observations...</span>
+      <div className="skeleton-content" aria-hidden="true">
+        {Array.from({ length: kind === "metrics" ? 4 : 3 }, (_, i) => (
+          <div key={i} className="skeleton-block">
+            <span />
+            <span />
+            <span />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

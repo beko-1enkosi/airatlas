@@ -17,6 +17,7 @@ import {
   number,
   pollutant,
   shortDate,
+  bucketTimestamp,
 } from "../services/format.js";
 import { SectionHeading, State, PollutantTabs } from "./Shared.jsx";
 
@@ -38,9 +39,11 @@ function DataTable({ rows, fields }) {
               <tr key={index}>
                 {fields.map(([key]) => (
                   <td key={key}>
-                    {typeof row[key] === "number"
-                      ? number(row[key])
-                      : (row[key] ?? "—")}
+                    {key === "measurement_date_utc"
+                      ? bucketTimestamp(row[key])
+                      : typeof row[key] === "number"
+                        ? number(row[key])
+                        : (row[key] ?? "—")}
                   </td>
                 ))}
               </tr>
@@ -63,14 +66,14 @@ function DailyPlot({
       <div
         className="chart"
         role="img"
-        aria-label={`${name} by UTC date in ${unit}. Chart data is available below.`}
+        aria-label={`${name} by daily bucket (SAST start) in ${unit}. Chart data is available below.`}
       >
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={rows}
             margin={{ top: 20, right: 20, bottom: 15, left: 4 }}
           >
-            <CartesianGrid stroke="#e6eeed" vertical={false} />
+            <CartesianGrid stroke="#E5E6F0" vertical={false} />
             <XAxis
               dataKey="measurement_date_utc"
               tickFormatter={shortDate}
@@ -86,15 +89,15 @@ function DailyPlot({
               tick={{ fontSize: 12 }}
             />
             <Tooltip
-              labelFormatter={(date) => `${date} · UTC`}
+              labelFormatter={bucketTimestamp}
               formatter={(value) => [`${number(value)} ${unit}`, name]}
             />
             <Line
               type="linear"
               dataKey={value}
-              stroke="#356267"
+              stroke="#3275CE"
               strokeWidth={2.5}
-              dot={{ r: 3, fill: "#356267", stroke: "white", strokeWidth: 2 }}
+              dot={{ r: 3, fill: "#3275CE", stroke: "white", strokeWidth: 2 }}
               activeDot={{ r: 6 }}
               connectNulls={false}
               isAnimationActive={false}
@@ -105,7 +108,7 @@ function DailyPlot({
       <DataTable
         rows={rows}
         fields={[
-          ["measurement_date_utc", "UTC date"],
+          ["measurement_date_utc", "Daily bucket start (SAST)"],
           [value, `${name} (${unit})`],
           ["observation_count", "Observations"],
         ]}
@@ -150,7 +153,7 @@ export function TrendPanel({
           </select>
         </label>
         <label>
-          From (UTC)
+          From (bucket date)
           <input
             type="date"
             value={dates.date_from}
@@ -161,7 +164,7 @@ export function TrendPanel({
           />
         </label>
         <label>
-          To (UTC)
+          To (bucket date)
           <input
             type="date"
             value={dates.date_to}
@@ -180,7 +183,9 @@ export function TrendPanel({
       </div>
       <p className="chart-note">
         Daily {pollutant(parameter)} averages · observation-weighted · UTC
-        period-end dates. Blank dates use the latest 90 stored days.
+        period-end dates. Blank dates use the latest 90 stored days. Each daily
+        bucket starts at 02:00 SAST (midnight UTC); the data is not regrouped into
+        SAST days.
       </p>
       <State
         resource={resource}
@@ -244,7 +249,7 @@ export function ComparisonPanel() {
                   layout="vertical"
                   margin={{ left: 2, right: 24, top: 12, bottom: 12 }}
                 >
-                  <CartesianGrid stroke="#e6eeed" horizontal={false} />
+                  <CartesianGrid stroke="#E5E6F0" horizontal={false} />
                   <XAxis type="number" axisLine={false} tickLine={false} />
                   <YAxis
                     dataKey="label"
@@ -262,9 +267,9 @@ export function ComparisonPanel() {
                   />
                   <Bar
                     dataKey="average_value"
-                    fill="#41737c"
-                    radius={[0, 5, 5, 0]}
-                    maxBarSize={24}
+                    fill="#6969AE"
+                    radius={[0, 8, 8, 0]}
+                    maxBarSize={40}
                     isAnimationActive={false}
                   />
                 </BarChart>
@@ -311,7 +316,8 @@ export function WeatherPanel({ selected }) {
       </SectionHeading>
       <p className="chart-note">
         Selected location · latest 90 stored days. Conditions during matched
-        observations; context, not causation.
+        observations; context, not causation. Daily buckets start at 02:00 SAST
+        (midnight UTC) and retain their original UTC aggregation.
       </p>
       <label className="weather-select">
         Weather variable
@@ -350,7 +356,7 @@ export function WeatherPanel({ selected }) {
                   data={rows}
                   margin={{ left: 0, right: 0, top: 25, bottom: 10 }}
                 >
-                  <CartesianGrid vertical={false} stroke="#e6eeed" />
+                  <CartesianGrid vertical={false} stroke="#E5E6F0" />
                   <XAxis
                     dataKey="measurement_date_utc"
                     tickFormatter={shortDate}
@@ -382,7 +388,7 @@ export function WeatherPanel({ selected }) {
                     }}
                   />
                   <Tooltip
-                    labelFormatter={(date) => `${date} · UTC`}
+                    labelFormatter={bucketTimestamp}
                     formatter={(value, key) => [
                       `${number(value)} ${key === "Pollution" ? unit : weatherUnit}`,
                       key,
@@ -392,7 +398,7 @@ export function WeatherPanel({ selected }) {
                     yAxisId="pollution"
                     dataKey="average_pollution_value"
                     name="Pollution"
-                    stroke="#356267"
+                    stroke="#3275CE"
                     strokeWidth={2}
                     dot={{ r: 2 }}
                     isAnimationActive={false}
@@ -418,7 +424,7 @@ export function WeatherPanel({ selected }) {
             <DataTable
               rows={rows}
               fields={[
-                ["measurement_date_utc", "UTC date"],
+                ["measurement_date_utc", "Daily bucket start (SAST)"],
                 ["average_pollution_value", `Pollution (${unit})`],
                 [metric, `${name} (${weatherUnit})`],
               ]}
