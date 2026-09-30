@@ -1,6 +1,13 @@
 # AirAtlas
 
-AirAtlas is an end-to-end **Data Engineering air-quality platform** built with public environmental data. It collects air-quality observations from OpenAQ, enriches them with historical weather from Open-Meteo, stores the result in PostgreSQL, transforms it with dbt, and orchestrates the full pipeline with Apache Airflow.
+AirAtlas is an end-to-end environmental data engineering platform that
+ingests South African air-quality observations, validates and enriches
+them with historical weather data, builds tested analytics models, and
+serves the results through an interactive web application.
+
+🌐 **Live App:** https://airatlas-three.vercel.app/
+
+🎥 **Demo Video:** Coming soon
 
 The project focuses on **PM2.5** and **PM10** measurements from South African monitoring locations.
 
