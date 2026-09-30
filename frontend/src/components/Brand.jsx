@@ -1,0 +1,15 @@
+export function WindMark() {
+  return (
+    <svg
+      viewBox="0 0 48 48"
+      width="42"
+      height="42"
+      fill="none"
+      aria-hidden="true"
+      className="wind-mark"
+    >
+      <path d="M8 22c0-9 8-16 17-14 8 1 13 8 12 15-1 7-7 12-13 11-5 0-8-4-7-8 1-4 5-6 8-4" />
+      <path d="M6 30c4 10 15 15 25 10M10 16c8-5 18-2 20 5 2 5-1 9-5 9M33 8c6 3 10 9 10 16" />
+    </svg>
+  );
+}

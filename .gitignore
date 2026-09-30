@@ -81,3 +81,7 @@ dist/
 /airflow/simple_auth_manager_passwords.json*
 /airflow/airflow-webserver.pid
 /airflow/airflow-scheduler.pid
+
+# Serving frontend dependencies and generated build output
+/frontend/node_modules/
+/frontend/dist/

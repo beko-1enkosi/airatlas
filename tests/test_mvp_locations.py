@@ -38,3 +38,23 @@ def test_selection_criteria(mvp_config):
         isinstance(criterion, str) and criterion.strip()
         for criterion in selection["criteria"]
     )
+
+
+def test_confirmed_openaq_coordinates(mvp_config):
+    # User-verified OpenAQ v3 /locations/{id} responses, not geocoded values.
+    expected = {
+        225448: (-26.252611, 27.872139),
+        225404: (-33.819667, 18.514333),
+        6868: (-28.731301, 32.039016),
+        225396: (-33.763778, 25.683428),
+        925659: (-23.90677, 29.431096),
+        355971: (-25.483507788469588, 27.167539254241067),
+    }
+    actual = {
+        location["id"]: (location["latitude"], location["longitude"])
+        for location in mvp_config["locations"]
+    }
+    assert actual == expected
+    for latitude, longitude in actual.values():
+        assert -90 <= latitude <= 90
+        assert -180 <= longitude <= 180

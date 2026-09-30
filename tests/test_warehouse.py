@@ -182,7 +182,7 @@ def test_mapping_and_hive_input(tmp_path, records):
     _write_dataset(table, hive)
     original = {p: p.read_bytes() for p in hive.rglob("*.parquet")}
     locations, observations, summary = prepare_input(hive)
-    assert locations == [(225448, "Jabavu-NAQI", None, None, -26.2, 28.0)]
+    assert locations == [(225448, "Jabavu-NAQI", -26.252611, 27.872139, -26.2, 28.0)]
     rows = [
         dict(zip(schema.OBSERVATION_COLUMNS, values, strict=True))
         for values in observations
@@ -478,3 +478,62 @@ def test_optional_provenance_nulls(tmp_path, records):
     first = dict(zip(schema.OBSERVATION_COLUMNS, rows[0], strict=True))
     assert first["source_file"] is None and first["period_label"] is None
     assert first["latitude"] is None
+
+
+@pytest.mark.parametrize("identifier", [225404, 225396, 355971])
+def test_canonical_station_coordinates_from_config(tmp_path, records, identifier):
+    config = json.loads(
+        (Path(__file__).resolve().parents[1] / "config/mvp_locations.json").read_text()
+    )["locations"]
+    station = next(location for location in config if location["id"] == identifier)
+    for row in records:
+        row.update(location_id=identifier, location_name=station["name"])
+    locations, observations, _ = prepare_input(parquet_input(tmp_path, records))
+    dimension = dict(zip(schema.LOCATION_COLUMNS, locations[0], strict=True))
+    assert (dimension["latitude"], dimension["longitude"]) == (
+        station["latitude"],
+        station["longitude"],
+    )
+    # The fixture weather pair differs: it must not become the station position.
+    assert dimension["weather_latitude"] == -26.2
+    for values in observations:
+        row = dict(zip(schema.OBSERVATION_COLUMNS, values, strict=True))
+        assert row["latitude"] is None and row["longitude"] is None
+
+
+def test_source_station_coordinates_take_precedence(tmp_path, records):
+    for row in records:
+        row.update(latitude=-26.3, longitude=27.9)
+    locations, _, _ = prepare_input(parquet_input(tmp_path, records))
+    assert locations[0][2:4] == (-26.3, 27.9)
+
+
+def test_no_confirmed_station_coordinates_remains_null(tmp_path, records):
+    locations, _, _ = prepare_input(parquet_input(tmp_path, records), locations=[])
+    assert locations[0][2:4] == (None, None)
+    assert locations[0][4:6] == (-26.2, 28.0)  # Weather is not a fallback.
+
+
+def test_partial_source_pair_uses_whole_confirmed_pair(tmp_path, records):
+    records[0]["latitude"] = -26.3
+    locations, _, _ = prepare_input(parquet_input(tmp_path, records))
+    assert locations[0][2:4] == (-26.252611, 27.872139)
+
+
+@pytest.mark.parametrize(
+    "latitude,longitude", [(91, 25), (-33, 181), (float("nan"), 25), (True, 25)]
+)
+def test_invalid_confirmed_station_coordinates_fail(
+    tmp_path, records, latitude, longitude
+):
+    with pytest.raises(WarehouseError, match="Invalid confirmed coordinates"):
+        prepare_input(
+            parquet_input(tmp_path, records),
+            locations=[{"id": 225448, "latitude": latitude, "longitude": longitude}],
+        )
+
+
+def test_invalid_source_coordinates_not_hidden_by_fallback(tmp_path, records):
+    records[0]["latitude"] = 91
+    with pytest.raises(WarehouseError, match="outside geographic bounds"):
+        prepare_input(parquet_input(tmp_path, records))

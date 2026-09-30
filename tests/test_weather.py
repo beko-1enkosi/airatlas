@@ -359,9 +359,50 @@ def test_missing_coordinates_before_requests(tmp_path, air_quality):
     air_quality["longitude"] = None
     client = client_for(lambda _: pytest.fail("No request should occur"))
     with pytest.raises(MissingLocationCoordinatesError):
-        enrich(tmp_path, input_dataset(tmp_path, air_quality), client)
+        enrich(tmp_path, input_dataset(tmp_path, air_quality), client, locations=[])
     assert client.requests_made == 0
     assert not (tmp_path / "raw").exists()
+
+
+def test_all_mvp_coordinate_fallback():
+    locations = json.loads(
+        (Path(__file__).resolve().parents[1] / "config/mvp_locations.json").read_text(
+            encoding="utf-8"
+        )
+    )["locations"]
+    observations = pd.DataFrame(
+        {
+            "location_id": [location["id"] for location in locations],
+            "latitude": None,
+            "longitude": None,
+        }
+    )
+    assert resolve_coordinates(observations, locations) == {
+        location["id"]: (location["latitude"], location["longitude"])
+        for location in locations
+    }
+
+
+@pytest.mark.parametrize("missing", ["latitude", "longitude"])
+def test_incomplete_config_coordinates_rejected(missing):
+    location = {"id": 225396, "latitude": -33.763778, "longitude": 25.683428}
+    del location[missing]
+    observations = pd.DataFrame({"location_id": [225396]})
+    with pytest.raises(MissingLocationCoordinatesError, match="225396"):
+        resolve_coordinates(observations, [location])
+
+
+@pytest.mark.parametrize(
+    ("latitude", "longitude"),
+    [(91, 25), (-33, 181), (float("nan"), 25), (-33, float("inf")), (True, 25)],
+)
+def test_invalid_config_coordinates_rejected(latitude, longitude):
+    observations = pd.DataFrame({"location_id": [225396]})
+    with pytest.raises(WeatherError, match="finite latitude/longitude"):
+        resolve_coordinates(
+            observations,
+            [{"id": 225396, "latitude": latitude, "longitude": longitude}],
+        )
 
 
 def test_enrichment_location_hour_manifest_and_rebuild(tmp_path, air_quality):
