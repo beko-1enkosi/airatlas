@@ -9,6 +9,8 @@ serves the results through an interactive web application.
 
 🎥 **Demo Video:** Coming soon
 
+💻 **Verification Code:** WTC-JB9M56E7
+
 The project focuses on **PM2.5** and **PM10** measurements from South African monitoring locations.
 
 ## What AirAtlas does
