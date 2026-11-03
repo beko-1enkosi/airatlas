@@ -14,3 +14,4 @@ airatlas_analytics:
       schema: "{{ env_var('AIRATLAS_DBT_SCHEMA', 'airatlas_analytics') }}"
       threads: 1
       connect_timeout: 10
+      sslmode: require
