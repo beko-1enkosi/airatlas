@@ -100,13 +100,15 @@ def series(kind, parameter, location_id, date_from, date_to, limit):
             average_wind_speed_10m_kmh, temperature_observation_count,
             humidity_observation_count, precipitation_observation_count,
             wind_observation_count"""
-    # Default period ends at the latest stored observation, not today's clock.
+    # Default period ends at the latest stored observation for this pollutant and
+    # optional location, not today's clock or another station's latest date.
     # Bound output and explicitly report truncation instead of claiming completeness.
     rows = query(
         statement(
             """WITH bounds AS (
         SELECT COALESCE(%s::date, max(measurement_date_utc)) AS end_date
         FROM {marts}.fct_air_quality_observations
+        WHERE parameter = %s AND (%s::bigint IS NULL OR location_id = %s)
     ) SELECT measurement_date_utc, location_id, location_name, parameter, unit,
         observation_count, """
             + fields
@@ -118,7 +120,17 @@ def series(kind, parameter, location_id, date_from, date_to, limit):
         AND measurement_date_utc <= bounds.end_date
         ORDER BY measurement_date_utc, location_id, parameter, unit LIMIT %s"""
         ),
-        (date_to, parameter, location_id, location_id, date_from, limit + 1),
+        (
+            date_to,
+            parameter,
+            location_id,
+            location_id,
+            parameter,
+            location_id,
+            location_id,
+            date_from,
+            limit + 1,
+        ),
     )
     return {"rows": rows[:limit], "truncated": len(rows) > limit, "limit": limit}
 

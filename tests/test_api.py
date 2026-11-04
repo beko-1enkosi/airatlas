@@ -245,19 +245,102 @@ def test_driver_message_is_not_exposed(monkeypatch):
     assert "secret" not in str(error.value)
 
 
-def test_series_parameter_binding_and_truncation(monkeypatch):
-    fake = MagicMock(return_value=[{"unit": "a"}, {"unit": "b"}, {"unit": "c"}])
+@pytest.mark.parametrize(
+    "kind,table,location_id,parameter,latest_date",
+    [
+        ("trends", "agg_daily_air_quality", 925659, "pm25", date(2023, 12, 1)),
+        ("trends", "agg_daily_air_quality", 225448, "pm25", date(2024, 6, 1)),
+        ("weather", "agg_pollution_weather", 6868, "pm10", date(2019, 8, 1)),
+        ("weather", "agg_pollution_weather", 6868, "pm25", date(2024, 8, 1)),
+    ],
+)
+def test_series_default_window_is_scoped_to_historical_station_and_pollutant(
+    monkeypatch, kind, table, location_id, parameter, latest_date
+):
+    fake = MagicMock(
+        return_value=[
+            {"measurement_date_utc": latest_date, "unit": "a"},
+            {"measurement_date_utc": latest_date, "unit": "b"},
+            {"measurement_date_utc": latest_date, "unit": "c"},
+        ]
+    )
     monkeypatch.setattr(queries, "query", fake)
-    result = queries.series("trends", "pm25", 225448, date(2026, 9, 1), None, 2)
+    result = queries.series(kind, parameter, location_id, None, None, 2)
     assert result == {
-        "rows": [{"unit": "a"}, {"unit": "b"}],
+        "rows": [
+            {"measurement_date_utc": latest_date, "unit": "a"},
+            {"measurement_date_utc": latest_date, "unit": "b"},
+        ],
         "truncated": True,
         "limit": 2,
     }
     statement, values = fake.call_args.args
-    assert values == (None, "pm25", 225448, 225448, date(2026, 9, 1), 3)
-    assert "agg_daily_air_quality" in statement.as_string()
-    assert "225448" not in statement.as_string()
+    assert values == (
+        None,
+        parameter,
+        location_id,
+        location_id,
+        parameter,
+        location_id,
+        location_id,
+        None,
+        3,
+    )
+    sql = statement.as_string()
+    bounds = sql.split(") SELECT", maxsplit=1)[0]
+    assert "fct_air_quality_observations" in bounds
+    assert "parameter = %s" in bounds
+    assert "location_id = %s" in bounds
+    assert "end_date - 89" in sql
+    assert table in sql
+    assert str(location_id) not in sql
+
+
+def test_series_without_location_uses_pollutant_bound_across_locations(monkeypatch):
+    fake = MagicMock(return_value=[])
+    monkeypatch.setattr(queries, "query", fake)
+
+    result = queries.series("trends", "pm25", None, None, None, 1000)
+
+    assert result == {"rows": [], "truncated": False, "limit": 1000}
+    assert fake.call_args.args[1] == (
+        None,
+        "pm25",
+        None,
+        None,
+        "pm25",
+        None,
+        None,
+        None,
+        1001,
+    )
+
+
+def test_series_preserves_explicit_date_bounds(monkeypatch):
+    fake = MagicMock(return_value=[])
+    monkeypatch.setattr(queries, "query", fake)
+    start = date(2019, 3, 1)
+    end = date(2019, 3, 31)
+
+    result = queries.series("weather", "pm10", 225448, start, end, 50)
+
+    assert result == {"rows": [], "truncated": False, "limit": 50}
+    statement, values = fake.call_args.args
+    assert values == (
+        end,
+        "pm10",
+        225448,
+        225448,
+        "pm10",
+        225448,
+        225448,
+        start,
+        51,
+    )
+    sql = statement.as_string()
+    assert "COALESCE(%s::date, max(measurement_date_utc))" in sql
+    assert "measurement_date_utc >= COALESCE(%s::date, bounds.end_date - 89)" in sql
+    assert "measurement_date_utc <= bounds.end_date" in sql
 
 
 def test_schema_setting_is_quoted(monkeypatch):

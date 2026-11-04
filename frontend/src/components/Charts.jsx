@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -124,10 +124,23 @@ export function TrendPanel({
   title = "Air quality over time",
 }) {
   const [parameter, setParameter] = useState("pm25");
-  const [dates, setDates] = useState({ date_from: "", date_to: "" });
+  const filterScope = `${selected || ""}:${parameter}`;
+  const blankDates = { scope: filterScope, date_from: "", date_to: "" };
+  const [dates, setDates] = useState(blankDates);
+  const activeDates = dates.scope === filterScope ? dates : blankDates;
+
+  useEffect(() => {
+    setDates({ scope: filterScope, date_from: "", date_to: "" });
+  }, [filterScope]);
+
   const resource = useResource(
     selected
-      ? apiPath("trends", { parameter, location_id: selected, ...dates })
+      ? apiPath("trends", {
+          parameter,
+          location_id: selected,
+          date_from: activeDates.date_from,
+          date_to: activeDates.date_to,
+        })
       : null,
   );
   return (
@@ -156,10 +169,14 @@ export function TrendPanel({
           From (bucket date)
           <input
             type="date"
-            value={dates.date_from}
-            max={dates.date_to || undefined}
+            value={activeDates.date_from}
+            max={activeDates.date_to || undefined}
             onChange={(event) =>
-              setDates({ ...dates, date_from: event.target.value })
+              setDates({
+                ...activeDates,
+                scope: filterScope,
+                date_from: event.target.value,
+              })
             }
           />
         </label>
@@ -167,25 +184,29 @@ export function TrendPanel({
           To (bucket date)
           <input
             type="date"
-            value={dates.date_to}
-            min={dates.date_from || undefined}
+            value={activeDates.date_to}
+            min={activeDates.date_from || undefined}
             onChange={(event) =>
-              setDates({ ...dates, date_to: event.target.value })
+              setDates({
+                ...activeDates,
+                scope: filterScope,
+                date_to: event.target.value,
+              })
             }
           />
         </label>
         <button
           className="text-button"
-          onClick={() => setDates({ date_from: "", date_to: "" })}
+          onClick={() => setDates(blankDates)}
         >
           Reset dates
         </button>
       </div>
       <p className="chart-note">
         Daily {pollutant(parameter)} averages · observation-weighted · UTC
-        period-end dates. Blank dates use the latest 90 stored days. Each daily
-        bucket starts at 02:00 SAST (midnight UTC); the data is not regrouped into
-        SAST days.
+        period-end dates. Blank dates use the latest 90 days available for the
+        selected station and pollutant. Each daily bucket starts at 02:00 SAST
+        (midnight UTC); the data is not regrouped into SAST days.
       </p>
       <State
         resource={resource}
@@ -315,9 +336,10 @@ export function WeatherPanel({ selected }) {
         <PollutantTabs value={parameter} onChange={setParameter} />
       </SectionHeading>
       <p className="chart-note">
-        Selected location · latest 90 stored days. Conditions during matched
-        observations; context, not causation. Daily buckets start at 02:00 SAST
-        (midnight UTC) and retain their original UTC aggregation.
+        Selected location · latest 90 days available for the selected station
+        and pollutant. Conditions during matched observations; context, not
+        causation. Daily buckets start at 02:00 SAST (midnight UTC) and retain
+        their original UTC aggregation.
       </p>
       <label className="weather-select">
         Weather variable
