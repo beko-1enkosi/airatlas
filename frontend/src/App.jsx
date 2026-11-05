@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Dashboard from "./pages/Dashboard.jsx";
 import { SocialIcon } from "./components/SocialIcon.jsx";
 import { WindMark } from "./components/Brand.jsx";
+import { AskAir } from "./components/AskAir.jsx";
 
 const navigation = [
   ["overview", "Overview"],
@@ -190,6 +191,7 @@ export default function App() {
           <a href="#top">Back to the clouds &#8593;</a>
         </div>
       </footer>
+      <AskAir section={active} />
     </>
   );
 }

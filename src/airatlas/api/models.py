@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Parameter = Literal["pm25", "pm10"]
 
@@ -126,3 +126,40 @@ class Run(BaseModel):
 class DataHealth(BaseModel):
     latest_run: Run | None
     summary: Summary
+
+
+class AskAirMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=600)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Message content cannot be blank.")
+        return value
+
+
+class AskAirRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=1200)
+    section: Literal["overview", "locations", "trends", "data-health"] | None = None
+    history: list[AskAirMessage] = Field(default_factory=list, max_length=6)
+
+    @field_validator("question")
+    @classmethod
+    def question_must_not_be_blank(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Question cannot be blank.")
+        return value
+
+    @model_validator(mode="after")
+    def conversation_must_stay_bounded(self):
+        if sum(len(message.content) for message in self.history) > 3000:
+            raise ValueError("Conversation history is too long.")
+        return self
+
+
+class AskAirResponse(BaseModel):
+    answer: str

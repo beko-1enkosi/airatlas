@@ -5,12 +5,13 @@ import re
 from datetime import date
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Path, Query
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BeforeValidator
 
+from airatlas.api import ask_air as ask_air_service
 from airatlas.api import models, queries
 from airatlas.api.database import DatabaseUnavailable, query
 
@@ -27,8 +28,8 @@ app = FastAPI(title="AirAtlas API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[os.environ.get("AIRATLAS_FRONTEND_ORIGIN", "http://localhost:5173")],
-    allow_methods=["GET"],
-    allow_headers=["Accept"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Accept", "Content-Type"],
     allow_credentials=False,
 )
 
@@ -45,11 +46,26 @@ def unavailable(request, exception):
 @app.exception_handler(RequestValidationError)
 def invalid_request(request, exception):
     # Do not echo arbitrary request input in error payloads.
+    if request.url.path == "/api/ask-air":
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Please enter a shorter, valid question for Ask Air."},
+        )
     return JSONResponse(
         status_code=422,
         content={
             "detail": "Invalid filter. Use pm25 or pm10, positive location IDs and ISO dates."
         },
+    )
+
+
+@app.exception_handler(ask_air_service.AskAirError)
+def ask_air_unavailable(request, exception):
+    headers = {"Retry-After": exception.retry_after} if exception.retry_after else None
+    return JSONResponse(
+        status_code=exception.status_code,
+        content={"detail": exception.public_message},
+        headers=headers,
     )
 
 
@@ -108,3 +124,15 @@ def weather(values: Annotated[tuple, Depends(filters)]):
 @app.get("/api/data-health", response_model=models.DataHealth)
 def data_health():
     return queries.data_health()
+
+
+@app.post("/api/ask-air", response_model=models.AskAirResponse)
+async def ask_air(request: Request, question: models.AskAirRequest):
+    client = request.client.host if request.client else "unknown"
+    if not ask_air_service.rate_limiter.allow(client):
+        raise ask_air_service.AskAirError(
+            429,
+            "Ask Air has received several questions. Please wait a minute and try again.",
+            retry_after="60",
+        )
+    return await ask_air_service.answer(question)

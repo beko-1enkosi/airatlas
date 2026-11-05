@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 const base = (
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
+  import.meta.env?.VITE_API_BASE_URL || "http://localhost:8000"
 ).replace(/\/$/, "");
 
 export function apiPath(path, filters = {}) {
@@ -62,4 +62,34 @@ export function useResource(path) {
     };
   }, [path, attempt]);
   return { ...state, retry: () => setAttempt((value) => value + 1) };
+}
+
+export async function askAir(payload, { signal } = {}) {
+  const response = await fetch(`${base}/api/ask-air`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    // A friendly fallback below handles non-JSON upstream/proxy responses.
+  }
+  if (!response.ok) {
+    const message =
+      typeof data.detail === "string"
+        ? data.detail
+        : "Ask Air could not answer just now. Please try again.";
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  if (typeof data.answer !== "string" || !data.answer.trim())
+    throw new Error("Ask Air returned an incomplete answer. Please try again.");
+  return { answer: data.answer.trim() };
 }
